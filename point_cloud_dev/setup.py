@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'pointcloud_sub = point_cloud_dev.pointcloud_sub:main',
         ],
     },
 )
