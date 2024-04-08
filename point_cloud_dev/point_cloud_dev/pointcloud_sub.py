@@ -7,7 +7,9 @@ import numpy as np
 import open3d as o3d
 
 
-pcdPath = "src/markless-calibration/pcd/output_point_cloud.ply"
+pcdPlyPath = "src/markless-calibration/pcd/out_pcd.ply"
+pcdTxtPath = "src/markless-calibration/pcd/out_pcd.txt"
+
 
 def parse_rgb_float(rgb_float):
     # 将float32编码的rgb值转换为整数
@@ -20,7 +22,7 @@ def parse_rgb_float(rgb_float):
 
 class PointCloud2Subscriber(Node):
     def __init__(self):
-        super().__init__('pointcloud_sub')
+        super().__init__('pcd_sub')
         self.subscription = self.create_subscription(
             PointCloud2,
             '/camera/camera/depth/color/points',
@@ -50,8 +52,9 @@ class PointCloud2Subscriber(Node):
         self.colors = temp_colors
 
         if len(self.points) > 10000:
-            self.save_point_cloud_to_ply(pcdPath)
-            self.get_logger().info(f'Received {len(self.points)} points to output_point_cloud.ply')
+            self.save_point_cloud_to_ply(pcdPlyPath)
+            self.save_point_cloud_to_txt(pcdTxtPath)
+            self.get_logger().info(f'Received {len(self.points)} points to file')
             self.points = []
             self.colors = []
 
@@ -68,6 +71,16 @@ class PointCloud2Subscriber(Node):
         point_cloud.colors = o3d.utility.Vector3dVector(self.colors)
         # 保存点云到PLY文件
         o3d.io.write_point_cloud(filename, point_cloud)
+        self.get_logger().info(f"Received {len(self.points)} points saved to {filename}")
+    
+    def save_point_cloud_to_txt(self, filename):
+        # 保存点云到TXT文件
+        with open(filename, 'w') as file:
+            for point, color in zip(self.points, self.colors):
+                # 将颜色值从[0, 1]范围转换回[0, 255]范围，并转换为整数
+                r, g, b = [int(c * 255) for c in color]
+                # 格式化字符串以包含点的坐标和颜色
+                file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
         self.get_logger().info(f"Received {len(self.points)} points saved to {filename}")
 
 
