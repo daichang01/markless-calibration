@@ -1,5 +1,6 @@
 import numpy as np
 import open3d as o3d
+import os
 
 
 def read_point_cloud_with_scalar(file_path):
@@ -29,12 +30,24 @@ def save_point_cloud_with_normals_and_scalar(pcd, scalars, file_path):
     normals = np.asarray(pcd.normals)
     # 假设标量字段已经是正确的格式，直接合并
     data_to_save = np.hstack((points, normals, scalars.reshape(-1, 1)))
-    np.savetxt(file_path, data_to_save, fmt='%f', header='X Y Z Nx Ny Nz Scalar', comments='')
+    # np.savetxt(file_path, data_to_save, fmt='%f', header='X Y Z Nx Ny Nz Scalar', comments='')
+    np.savetxt(file_path, data_to_save, fmt='%f', comments='')
+
+def process_folder(input_folder, output_folder):
+    files = [f for f in os.listdir(input_folder) if os.path.isfile(os.path.join(input_folder, f))]
+    files.sort()  # Ensure files are processed in alphabetical order
+    for index, filename in enumerate(files):
+        print(f"Processing {filename}...")
+        input_path = os.path.join(input_folder, filename)
+        output_path = os.path.join(output_folder, f"normals-{index + 1}.txt")
+        pcd, scalars = read_point_cloud_with_scalar(input_path)
+        compute_normals(pcd)
+        save_point_cloud_with_normals_and_scalar(pcd, scalars, output_path)
+
+def main():
+    input_folder = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/label_data"
+    output_folder = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/label_normals"
+    process_folder(input_folder, output_folder)
 
 if __name__ == '__main__':
-    input_file = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/out_pcd - Cloud2.txt"
-    output_file = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/output_with_normals.txt"
-
-    pcd, scalars = read_point_cloud_with_scalar(input_file)
-    compute_normals(pcd)
-    save_point_cloud_with_normals_and_scalar(pcd, scalars, output_file)
+    main()
