@@ -21,7 +21,7 @@ def read_point_cloud_with_scalar(file_path):
 def compute_normals(pcd):
     # 计算点云的法线
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-    # 确保法线的方向是正确的，这一步可根据需要省略
+    # 确保法线的方向是正确的,可省略
     pcd.orient_normals_towards_camera_location(pcd.get_center())
 
 #保存新格式的点云数据
