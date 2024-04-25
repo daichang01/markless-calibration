@@ -21,7 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'pointcloud_sub = point_cloud_dev.pointcloud_sub:main',
-            'format_converse = point_cloud_dev.format_converse:main',
+            'preproceing = point_cloud_dev.preproceing:main',
             'showPointCloud = point_cloud_dev.showPointCloud:main',
         ],
     },
