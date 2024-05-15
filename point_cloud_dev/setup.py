@@ -23,6 +23,8 @@ setup(
             'pointcloud_sub = point_cloud_dev.pointcloud_sub:main',
             'preproceing = point_cloud_dev.preproceing:main',
             'showPointCloud = point_cloud_dev.showPointCloud:main',
+            'depthImage_sub = point_cloud_dev.depthImage_sub:main',
+            'depthRgb_sub = point_cloud_dev.depthRgb_sub:main'
         ],
     },
 )
