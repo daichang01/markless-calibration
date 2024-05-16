@@ -20,11 +20,11 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'pointcloud_sub = point_cloud_dev.pointcloud_sub:main',
+            'oripointcloud_sub = point_cloud_dev.oripointcloud_sub:main',
+            'segpointcloud_sub = point_cloud_dev.segpointcloud_sub:main',
             'preproceing = point_cloud_dev.preproceing:main',
             'showPointCloud = point_cloud_dev.showPointCloud:main',
-            'depthImage_sub = point_cloud_dev.depthImage_sub:main',
-            'depthRgb_sub = point_cloud_dev.depthRgb_sub:main'
+            'depthRgbsub_pcpub = point_cloud_dev.depthRgbsub_pcpub:main',
         ],
     },
 )
