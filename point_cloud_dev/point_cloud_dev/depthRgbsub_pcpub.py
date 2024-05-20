@@ -13,6 +13,9 @@ import struct
 import os
 import torch
 from datetime import datetime
+from ultralytics import YOLO
+from pathlib import Path
+
 
 class ImageSubscriber(Node):
     def __init__(self):
@@ -20,7 +23,8 @@ class ImageSubscriber(Node):
         self.bridge = CvBridge()
         self.color_sub = message_filters.Subscriber(self, Image, '/camera/camera/color/image_rect_raw')
         self.depth_sub = message_filters.Subscriber(self, Image, '/camera/camera/aligned_depth_to_color/image_raw')
-        self.publisher = self.create_publisher(PointCloud2, 'seg_point_cloud', 10)
+        self.upteeth_publisher = self.create_publisher(PointCloud2, 'upteeth_point_cloud', 10)
+        self.lowteeth_publisher = self.create_publisher(PointCloud2, 'lowteeth_point_cloud', 10)
         self.ts = message_filters.ApproximateTimeSynchronizer([self.color_sub, self.depth_sub], 10, 0.1)
         self.ts.registerCallback(self.callback)
 
@@ -30,12 +34,14 @@ class ImageSubscriber(Node):
         self.image_folder = "src/markless-calibration/image"  # 路径需要根据你的文件系统进行修改
 
 ##################  采集RGB和深度图并保存,用于yolo训练  ####################################################################
-        self.timer = self.create_timer(2.0, self.save_images)
+        # self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载模型 ########################################################################################
         # self.model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
         # self.model.eval()
         # self.class_names = self.model.names  # 从模型自动获取类别名称
+        self.model = YOLO("best.pt") #yolov8在本地训练的实例分割模型
+        
 
 
     def save_images(self):
@@ -86,43 +92,81 @@ class ImageSubscriber(Node):
             cv2.destroyAllWindows()
 ######  yolo检测demo #########################################
         # yolo_results = self.model(cv_color_image)
-        # print(yolo_results)
-        # #绘制检测结果
-        # cv_image = self.draw_boxes(yolo_results, cv_color_image)
-        # cv2.imshow("Yolo detection", cv_image)
-        # cv2.waitKey(1)
-######  裁减测试demo，裁减图像中间300*300区域生成点云  ########################
-        # height, width, channels = cv_color_image.shape
-        # center_x, center_y = width // 2, height // 2
-        # half_width, half_height = 150, 150  # 因为我们要裁剪300x300区域
-        # start_x, end_x = center_x - half_width, center_x + half_width
-        # start_y, end_y = center_y - half_height, center_y + half_height       
+        yolo_results = self.model.predict(cv_color_image)
+        if yolo_results:
+            for r in yolo_results:
+                img = np.copy(r.orig_img)
+                img_name = Path(r.path).stem
+                # 遍历每个结果中的对象，这些对象可能代表不同的检测到的实体
+                for ci, c in enumerate(r):
+                    # 获取检测到的对象的标签名称
+                    # label = c.names[c.boxes.cls.tolist().pop()]
+                    cls_idx = int(c.boxes.cls[0])  # 获取类别索引
+                    label = c.names[cls_idx]  # 使用索引获取标签名称
 
-        # points = []
-        # # height, width, channels = cv_color_image.shape
-        # for v in range(start_y, end_y):
-        #     for u in range(start_x, end_x):
-        #         depth = cv_depth_image[v, u]
-        #         if depth > 0:  # Simple depth filter to remove zero depth values
-        #             # 这里的内参需要根据实际相机调整
-        #             z = depth * 0.001  # scale depth to meters
-        #             x = (u - 425.98785400390625) * z / 425.2796325683594
-        #             y = (v - 241.7391357421875) * z / 425.2796325683594
-        #             b, g, r = cv_color_image[v, u].astype(np.uint8)
-        #             # points.append([x, y, z, r, g, b])
-        #             rgb = struct.pack('BBBB', r, g, b, 255)  # 封装BGR到一个uint32中
-        #             rgb = struct.unpack('I', rgb)[0]
-        #             points.append([x, y, z, rgb])
+                    # 创建一个与原图大小相同的黑色掩码
+                    b_mask = np.zeros(img.shape[:2], np.uint8)
+                    # 从检测对象中提取轮廓并转换为整数坐标
+                    contour = c.masks.xy.pop()
+                    contour = contour.astype(np.int32)
+                    contour = contour.reshape(-1, 1, 2) #符合 OpenCV cv2.drawContours 函数的要求
+                    _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+                    # 将单通道的黑白掩码转换为三通道格式
+                    mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+                    # 使用掩码与原图进行按位与操作，仅保留掩码区域的像素
+                    isolated = cv2.bitwise_and(mask3ch, img)
+                    #  Bounding box coordinates
+                    x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+                    print(f"{cls_idx}_{label}: {x1, y1, x2, y2}")
+                    # Crop image to object region
+                    iso_crop = isolated[y1:y2, x1:x2]
 
-        # # Create PointCloud2 message
-        # header = Header(frame_id='camera_link', stamp=self.get_clock().now().to_msg())
-        # fields = [PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-        #         PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-        #         PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-        #         PointField(name='rgb', offset=12, datatype=PointField.UINT32, count=1)]
-        # point_cloud_msg = pc2.create_cloud(header, fields, points)
-        # self.publisher.publish(point_cloud_msg)
-        # print("Published Point Cloud")
+                    # 将处理后的图像保存到文件
+                    # cv2.imwrite(f"{img_name}_{label}.png", isolated)
+                    cv2.imshow(f"{cls_idx}_{label}", iso_crop)
+                    cv2.waitKey(5)
+
+                    ######  裁减测试demo，裁减图像中间掩码区域生成点云  ########################
+                    start_x, end_x = x1, x2
+                    start_y, end_y = y1, y2      
+
+                    points = []
+                    # height, width, channels = cv_color_image.shape
+                    for v in range(start_y, end_y):
+                        for u in range(start_x, end_x):
+                            depth = cv_depth_image[v, u]
+                            if depth > 0:  # Simple depth filter to remove zero depth values
+                                # 这里的内参需要根据实际相机调整
+                                z = depth * 0.001  # scale depth to meters
+                                x = (u - 425.98785400390625) * z / 425.2796325683594
+                                y = (v - 241.7391357421875) * z / 425.2796325683594
+                                b, g, r = cv_color_image[v, u].astype(np.uint8)
+                                # points.append([x, y, z, r, g, b])
+                                rgb = struct.pack('BBBB', r, g, b, 255)  # 封装BGR到一个uint32中
+                                rgb = struct.unpack('I', rgb)[0]
+                                points.append([x, y, z, rgb])
+
+                    # Create PointCloud2 message
+                    header = Header(frame_id='camera_link', stamp=self.get_clock().now().to_msg())
+                    fields = [PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+                            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+                            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+                            PointField(name='rgb', offset=12, datatype=PointField.UINT32, count=1)]
+                    point_cloud_msg = pc2.create_cloud(header, fields, points)
+                    if(cls_idx == 0):
+                        self.upteeth_publisher.publish(point_cloud_msg)
+                        print("upteeth Point Cloud published")
+                    elif(cls_idx == 1):
+                        self.lowteeth_publisher.publish(point_cloud_msg)
+                        print("lowteeth Point Cloud published")
+                    
+                    
+        else:
+            print("No objects detected")
+
+
+
+
 
 
         

@@ -7,6 +7,7 @@ import sensor_msgs_py.point_cloud2 as pc2
 import struct
 import numpy as np
 import open3d as o3d
+from datetime import datetime
 
 def parse_rgb_float(rgb_float):
     # 将float32编码的rgb值转换为整数
@@ -55,10 +56,10 @@ class PointCloud2Subscriber(Node):
     def timer_callback(self):
         # 定时保存点云数据
         if self.points:
-            filename = f"src/markless-calibration/pcd/01origin_data/ori{self.save_index}.txt"
+            current_time = datetime.now().strftime("%m%d_%H%M%S")
+            filename = f"src/markless-calibration/pcd/01origin_data/ori{current_time}.txt"
             self.save_point_cloud_to_txt(filename)
             self.get_logger().info(f'已保存 {len(self.points)} 个点到文件 {filename}')
-            self.save_index += 1  # 更新文件序号
             # 清空点列表和颜色列表以准备下一个点云
             self.points = []
             self.colors = []
