@@ -135,14 +135,14 @@ class ImageSubscriber(Node):
                     for v in range(start_y, end_y):
                         for u in range(start_x, end_x):
                             depth = cv_depth_image[v, u]
-                            if depth > 0:  # Simple depth filter to remove zero depth values
+                            if depth > 0:  # 简单的深度滤波，移除深度值为0的点
                                 # 这里的内参需要根据实际相机调整
                                 z = depth * 0.001  # scale depth to meters
                                 x = (u - 425.98785400390625) * z / 425.2796325683594
                                 y = (v - 241.7391357421875) * z / 425.2796325683594
                                 b, g, r = cv_color_image[v, u].astype(np.uint8)
-                                # points.append([x, y, z, r, g, b])
-                                rgb = struct.pack('BBBB', r, g, b, 255)  # 封装BGR到一个uint32中
+                                # print("BGR values:", b, g, r)  # 直接打印看是否有异常
+                                rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
                                 rgb = struct.unpack('I', rgb)[0]
                                 points.append([x, y, z, rgb])
 

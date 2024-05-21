@@ -45,7 +45,11 @@ class PointCloud2Subscriber(Node):
 
         for point in point_list:
             x, y, z, rgb = point
-            r, g, b = parse_rgb_float(rgb)
+            # r, g, b = parse_rgb_float(rgb)
+            rgb_int = np.array([rgb], dtype=np.uint32)
+            r = (rgb_int >> 16) & 0x0000ff
+            g = (rgb_int >> 8) & 0x0000ff
+            b = rgb_int & 0x0000ff
             temp_points.append([x, y, z])
             # 颜色值需要从[0, 255]范围转换到[0, 1]范围
             temp_colors.append([r / 255.0, g / 255.0, b / 255.0])
