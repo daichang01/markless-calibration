@@ -8,6 +8,7 @@ import struct
 import numpy as np
 import open3d as o3d
 from datetime import datetime
+import time
 
 
 
@@ -103,43 +104,66 @@ class PointCloud2Subscriber(Node):
                 for point, color in zip(self.uppoints, self.upcolors):
                     r, g, b = [int(c * 255) for c in color]
                     # if r + b + g > 400:
-                    if max(r, g, b) - min(r, g, b) < 80:
+                    if max(r, g, b) - min(r, g, b) < 70:
                         file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
                         point_count += 1 
             self.get_logger().info(f"{point_count} 个点已保存至 {filename}")
+            self.process_and_save_outliers(filename, filename.replace("upseg", "upsegfilter"))
         except Exception as e:
             self.get_logger().error(f"Failed to save point cloud to {filename}: {str(e)}")
 
     def save_lowpoint_cloud_to_txt(self, filename):
+        start_time = time.time()  # 记录函数开始执行的时间
         point_count = 0 
         # 保存点云到TXT文件
         try:
-            # 创建 Open3D 点云对象
-            # pc = o3d.geometry.PointCloud()
-            # # 将 lowpoints 和 lowcolors 转换为 numpy 数组
-            # np_points = np.array(self.lowpoints)
-            # np_colors = np.array(self.lowcolors)
-            # # 将 numpy 数组赋值给点云对象
-            # pc.points = o3d.utility.Vector3dVector(np_points)
-            # pc.colors = o3d.utility.Vector3dVector(np_colors)
-            # # 去除离群值
-            # nb_neighbors = 20  # 邻域点数量
-            # std_ratio = 2.0    # 标准差乘数
-            # filtered_pc, ind = pc.remove_statistical_outlier(nb_neighbors, std_ratio)
-            # filtered_points = np.asarray(filtered_pc.points)
-            # filtered_colors = np.asarray(filtered_pc.colors)
-
             with open(filename, 'w') as file:
                 for point, color in zip(self.lowpoints, self.lowcolors):  
-                # for point, color in zip(filtered_points, filtered_colors):
                     r, g, b = [int(c * 255) for c in color]
-                    if max(r, g, b) - min(r, g, b) < 80:
+                    if max(r, g, b) - min(r, g, b) < 70:
                         file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
                         point_count += 1
             self.get_logger().info(f"{point_count} 个点已保存至 {filename}")
+            self.process_and_save_outliers(filename, filename.replace("lowseg", "lowsegfilter"))
         except Exception as e:
             self.get_logger().error(f"Failed to save point cloud to {filename}: {str(e)}")
+        finally:
+            end_time = time.time()  # 记录函数执行完毕的时间
+            elapsed_time = (end_time - start_time) * 1000  # 计算总耗时
+            self.get_logger().info(f"Total execution time: {elapsed_time:.2f} milliseconds")  # 输出总耗时
 
+    def process_and_save_outliers(self, input_filename, output_filename, nb_neighbors=20, std_ratio=2.0):
+        try:
+            # 读取点云数据
+            points = []
+            colors = []
+            with open(input_filename, 'r') as file:
+                for line in file:
+                    parts = line.strip().split()
+                    points.append([float(parts[0]), float(parts[1]), float(parts[2])])
+                    colors.append([int(parts[3])/255.0, int(parts[4])/255.0, int(parts[5])/255.0])
+
+            # 创建 Open3D 点云对象
+            pc = o3d.geometry.PointCloud()
+            pc.points = o3d.utility.Vector3dVector(np.array(points))
+            pc.colors = o3d.utility.Vector3dVector(np.array(colors))
+
+            # 去除离群值
+            filtered_pc, ind = pc.remove_statistical_outlier(nb_neighbors, std_ratio)
+
+            # 保存处理后的点云数据
+            filtered_points = np.asarray(filtered_pc.points)
+            filtered_colors = np.asarray(filtered_pc.colors)
+            point_count = 0
+            with open(output_filename, 'w') as file:
+                for point, color in zip(filtered_points, filtered_colors):
+                    r, g, b = [int(c * 255) for c in color]
+                    file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
+                    point_count += 1 
+            
+            self.get_logger().info(f"Processed point cloud saved to {output_filename},Total points saved: {point_count}")
+        except Exception as e:
+            self.get_logger().info(f"Failed to process and save point cloud: {str(e)}")
 
 def main(args=None):
     rclpy.init(args=args)
