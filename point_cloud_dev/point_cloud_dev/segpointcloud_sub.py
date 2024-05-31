@@ -104,7 +104,7 @@ class PointCloud2Subscriber(Node):
                 for point, color in zip(self.uppoints, self.upcolors):
                     r, g, b = [int(c * 255) for c in color]
                     # if r + b + g > 400:
-                    if max(r, g, b) - min(r, g, b) < 70:
+                    if max(r, g, b) - min(r, g, b) < 80:
                         file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
                         point_count += 1 
             self.get_logger().info(f"{point_count} 个点已保存至 {filename}")
@@ -120,7 +120,7 @@ class PointCloud2Subscriber(Node):
             with open(filename, 'w') as file:
                 for point, color in zip(self.lowpoints, self.lowcolors):  
                     r, g, b = [int(c * 255) for c in color]
-                    if max(r, g, b) - min(r, g, b) < 70:
+                    if max(r, g, b) - min(r, g, b) < 80:
                         file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
                         point_count += 1
             self.get_logger().info(f"{point_count} 个点已保存至 {filename}")
@@ -132,7 +132,7 @@ class PointCloud2Subscriber(Node):
             elapsed_time = (end_time - start_time) * 1000  # 计算总耗时
             self.get_logger().info(f"Total execution time: {elapsed_time:.2f} milliseconds")  # 输出总耗时
 
-    def process_and_save_outliers(self, input_filename, output_filename, nb_neighbors=20, std_ratio=2.0):
+    def process_and_save_outliers(self, input_filename, output_filename, nb_neighbors=20, std_ratio=1.5):
         try:
             # 读取点云数据
             points = []
@@ -149,6 +149,8 @@ class PointCloud2Subscriber(Node):
             pc.colors = o3d.utility.Vector3dVector(np.array(colors))
 
             # 去除离群值
+            # 指定用于计算每个点的局部密度的邻居的数量。具体来说，对于每个点，算法将计算它与最近的 nb_neighbors 个点的平均距离。
+            # 这个参数用于设定识别离群值的敏感度。具体操作是，首先计算每个点与其 nb_neighbors 的平均距离，然后计算所有点的这些距离的平均值和标准偏差。点的平均距离超过 平均距离 + std_ratio × 标准偏差 的将被认为是离群值。
             filtered_pc, ind = pc.remove_statistical_outlier(nb_neighbors, std_ratio)
 
             # 保存处理后的点云数据

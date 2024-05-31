@@ -92,7 +92,7 @@ class ImageSubscriber(Node):
         if cv2.waitKey(10) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
 ######  yolo检测demo #########################################
-        # yolo_results = self.model(cv_color_image)
+        yolo_results = self.model(cv_color_image)
         yolo_results = self.model.predict(cv_color_image)
         if yolo_results:
             for r in yolo_results:
