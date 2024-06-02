@@ -114,7 +114,7 @@ class ImageSubscriber(Node):
                     _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
                     # 将单通道的黑白掩码转换为三通道格式
                     mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
-                    # 使用掩码与原图进行按位与操作，仅保留掩码区域的像素
+                    # 结果是原图中只有与掩码白色区域相对应的部分被保留，其余部分因为与黑色（0）的与操作而变为黑色。
                     isolated = cv2.bitwise_and(mask3ch, img)
                     #  Bounding box coordinates
                     x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
@@ -122,20 +122,69 @@ class ImageSubscriber(Node):
                     # Crop image to object region
                     iso_crop = isolated[y1:y2, x1:x2]
 
+
                     # 将处理后的图像保存到文件
                     # cv2.imwrite(f"{img_name}_{label}.png", isolated)
                     cv2.namedWindow(f"{cls_idx}_{label}", cv2.WINDOW_NORMAL)
                     cv2.imshow(f"{cls_idx}_{label}", iso_crop)
                     cv2.waitKey(5)
 
-                    ######  裁减测试demo，裁减图像中间掩码区域生成点云  ########################
+                    ############################################## 牙齿轮廓提取 #####################################################
+                    gray_image = cv2.cvtColor(iso_crop, cv2.COLOR_BGR2GRAY)
+                    # 应用高斯模糊
+                    gray_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
+                    # 腐蚀操作
+                    kernel = np.ones((3,3), np.uint8)
+                    gray_image = cv2.erode(gray_image, kernel, iterations=1)
+                    # 使用 Otsu 的方法自动确定阈值
+                    otsu_thresh, binary_image = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    threshold1 = 0.5 * otsu_thresh
+                    threshold2 = otsu_thresh
+                    print(threshold1, threshold2)
+
+                    # 应用 Canny 边缘检测
+                    edges = cv2.Canny(gray_image, threshold1, threshold2)
+                    # 查找边缘的轮廓，只检索最外层轮廓
+                    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    # 过滤轮廓
+                    min_area = 10  # 设置最小面积阈值
+                    large_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
+                    print(f"Number of main contours: {len(large_contours)}")  # 打印主要轮廓的数量
+
+                    # 应用 Canny 边缘检测
+                    edges = cv2.Canny(gray_image, threshold1, threshold2)
+                    # 查找边缘的轮廓，只检索最外层轮廓
+                    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                    # 选择面积最大的轮廓绘制
+                    if contours:
+                        # 根据面积排序轮廓
+                        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+                        contours = contours[:len(large_contours)] # 选择前 n个 根据实际情况调整
+                        #绘制前n个最大轮廓
+                        mask = np.zeros_like(iso_crop)
+                        cv2.drawContours(mask, contours, -1, (0, 255, 0), 2)
+
+                        overlaid_image = cv2.addWeighted(iso_crop, 0.7, mask, 0.3, 0)
+
+                        cv2.namedWindow(f"{cls_idx}_{label} Overlaid", cv2.WINDOW_NORMAL)
+                        # cv2.imshow(f"{cls_idx}_{label}mask", mask)
+                        cv2.imshow(f"{cls_idx}_{label} Overlaid", overlaid_image)
+                        cv2.waitKey(5)
+
+                    ###############################  裁减测试demo，裁减图像中间掩码区域生成点云  ##################################################
                     start_x, end_x = x1, x2
                     start_y, end_y = y1, y2      
 
                     points = []
-                    # height, width, channels = cv_color_image.shape
-                    for v in range(start_y, end_y):
-                        for u in range(start_x, end_x):
+
+                    # for v in range(start_y, end_y):
+                    #     for u in range(start_x, end_x):
+                    #         depth = cv_depth_image[v, u]
+                    for contour in contours:
+                        for point in contour:
+                            u = point[0][0] + start_x
+                            v = point[0][1] + start_y
                             depth = cv_depth_image[v, u]
                             if depth > 0:  # 简单的深度滤波，移除深度值为0的点
                                 # 这里的内参需要根据实际相机调整
