@@ -103,10 +103,9 @@ class PointCloud2Subscriber(Node):
             with open(filename, 'w') as file:
                 for point, color in zip(self.uppoints, self.upcolors):
                     r, g, b = [int(c * 255) for c in color]
-                    # if r + b + g > 400:
-                    if max(r, g, b) - min(r, g, b) < 80:
-                        file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
-                        point_count += 1 
+                    # if max(r, g, b) - min(r, g, b) < 80:
+                    file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
+                    point_count += 1 
             self.get_logger().info(f"{point_count} 个点已保存至 {filename}")
             self.process_and_save_outliers(filename, filename.replace("upseg", "upsegfilter"))
         except Exception as e:
@@ -120,9 +119,9 @@ class PointCloud2Subscriber(Node):
             with open(filename, 'w') as file:
                 for point, color in zip(self.lowpoints, self.lowcolors):  
                     r, g, b = [int(c * 255) for c in color]
-                    if max(r, g, b) - min(r, g, b) < 80:
-                        file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
-                        point_count += 1
+                    # if max(r, g, b) - min(r, g, b) < 80:
+                    file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
+                    point_count += 1
             self.get_logger().info(f"{point_count} 个点已保存至 {filename}")
             self.process_and_save_outliers(filename, filename.replace("lowseg", "lowsegfilter"))
         except Exception as e:

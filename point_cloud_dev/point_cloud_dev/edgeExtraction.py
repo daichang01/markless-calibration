@@ -2,19 +2,24 @@ import cv2
 import numpy as np
 
 # 读取图像
-image = cv2.imread('/home/daichang/Desktop/ros2_ws/src/markless-calibration/image/2024-06-02_11-02.png')
+image = cv2.imread('/home/daichang/Desktop/ros2_ws/src/markless-calibration/image/2024-06-05_14-50.png')
 if image is None:
     print("Image not found")
 else:
     # 转换为灰度图像
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
+    # 直方图均衡化增强对比度
+    # gray_image = cv2.equalizeHist(gray_image)
+    alpha = 0.5  # 对比度控制系数，小于1降低对比度，大于1增加对比度
+    gray_image = cv2.addWeighted(gray_image, alpha, gray_image, 0, 128*(1-alpha))  # 128*(1-alpha) 是增加的亮度
+
     # 应用高斯模糊
     gray_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
 
     # 腐蚀操作
     kernel = np.ones((3,3), np.uint8)
-    gray_image = cv2.erode(gray_image, kernel, iterations=1)
+    gray_image = cv2.erode(gray_image, kernel, iterations=2)
     
     # 使用 Otsu 的方法自动确定阈值
     otsu_thresh, binary_image = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -25,7 +30,8 @@ else:
     # 应用 Canny 边缘检测
     edges = cv2.Canny(gray_image, threshold1, threshold2)
     # 查找边缘的轮廓，只检索最外层轮廓
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE) #获取所有轮廓点
     # 过滤轮廓
     min_area = 10  # 设置最小面积阈值
     large_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
@@ -43,9 +49,10 @@ else:
 
             # 打印每个轮廓中的所有点
         for i, contour in enumerate(large_contours):
-            print(f"Contour {i}:")
-            for point in contour:
-                x, y = point.ravel()  # 转换点为 x, y 坐标
+            num_points = len(contour)  # 获取轮廓中点的数量
+            print(f"Contour {i} has {num_points} points:")
+            # for point in contour:
+            #     x, y = point.ravel()  # 转换点为 x, y 坐标
                 # print(f"({x}, {y})")  # 打印坐标
 
     overlaid_image = cv2.addWeighted(image, 0.7, contour_image, 0.3, 0)

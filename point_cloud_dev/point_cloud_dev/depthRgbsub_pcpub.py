@@ -36,10 +36,7 @@ class ImageSubscriber(Node):
 ##################  采集RGB和深度图并保存,用于yolo训练  ####################################################################
         # self.timer = self.create_timer(2.0, self.save_images)
 
-##################   yolo集成，用于加载模型 ########################################################################################
-        # self.model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
-        # self.model.eval()
-        # self.class_names = self.model.names  # 从模型自动获取类别名称
+##################   yolo集成，用于加载训练好的模型 ########################################################################################
         self.model = YOLO("best.pt") #yolov8在本地训练的实例分割模型
         
 
@@ -52,12 +49,12 @@ class ImageSubscriber(Node):
 
             # 保存彩色图像
             cv2.imwrite(color_filename, self.latest_color_image)
+            self.get_logger().info(f'rgb Images saved: {color_filename}')
+
             # 保存深度图像，先进行归一化处理
             # depth_normalized = cv2.normalize(self.latest_depth_image, None, 0, 255, cv2.NORM_MINMAX)
             # depth_normalized = np.uint8(depth_normalized)
             # cv2.imwrite(depth_filename, depth_normalized)
-
-            self.get_logger().info(f'rgb Images saved: {color_filename}')
             # self.get_logger().info(f'depth Images saved: {depth_filename}')
 
 
@@ -91,9 +88,10 @@ class ImageSubscriber(Node):
         # cv2.imshow("Depth Image", cv_depth_normalized)
         if cv2.waitKey(10) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
-######  yolo检测demo #########################################
+############################################################### yolo检测demo ################3#########################################
         yolo_results = self.model(cv_color_image)
         yolo_results = self.model.predict(cv_color_image)
+        # yolo_results = None
         if yolo_results:
             for r in yolo_results:
                 img = np.copy(r.orig_img)
@@ -130,6 +128,7 @@ class ImageSubscriber(Node):
                     cv2.waitKey(5)
 
                     ############################################## 牙齿轮廓提取 #####################################################
+                    #转换为灰度图
                     gray_image = cv2.cvtColor(iso_crop, cv2.COLOR_BGR2GRAY)
                     # 应用高斯模糊
                     gray_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
@@ -144,18 +143,22 @@ class ImageSubscriber(Node):
 
                     # 应用 Canny 边缘检测
                     edges = cv2.Canny(gray_image, threshold1, threshold2)
+                    cropped_mask = b_mask[y1:y2, x1:x2]
+                    erode_mask = cv2.erode(cropped_mask, kernel, iterations=2)
+                    edges = cv2.bitwise_and(edges, edges, mask=erode_mask)
                     # 查找边缘的轮廓，只检索最外层轮廓
-                    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    # contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
                     # 过滤轮廓
-                    min_area = 10  # 设置最小面积阈值
+                    min_area = 5  # 设置最小面积阈值
                     large_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
                     print(f"Number of main contours: {len(large_contours)}")  # 打印主要轮廓的数量
+                    # 打印每个轮廓中点的数量
+                    for i, contour in enumerate(large_contours):
+                        num_points = len(contour)  # 获取轮廓中点的数量
+                        print(f"Contour {i} has {num_points} points:")
 
-                    # 应用 Canny 边缘检测
-                    edges = cv2.Canny(gray_image, threshold1, threshold2)
-                    # 查找边缘的轮廓，只检索最外层轮廓
-                    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
+                  
                     # 选择面积最大的轮廓绘制
                     if contours:
                         # 根据面积排序轮廓
@@ -163,7 +166,7 @@ class ImageSubscriber(Node):
                         contours = contours[:len(large_contours)] # 选择前 n个 根据实际情况调整
                         #绘制前n个最大轮廓
                         mask = np.zeros_like(iso_crop)
-                        cv2.drawContours(mask, contours, -1, (0, 255, 0), 2)
+                        cv2.drawContours(mask, contours, -1, (0, 255, 0), 1)
 
                         overlaid_image = cv2.addWeighted(iso_crop, 0.7, mask, 0.3, 0)
 

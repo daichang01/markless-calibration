@@ -66,7 +66,9 @@ def create_local_axis(point_cloud, size=0.01):
 
 # 加载点云
 pc1 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/edge_teeth.txt")
-pc2 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/teethtrue-seg.txt")
+# pc2 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/teethtrue-seg.txt")
+pc2 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/auto-seg/upteeth/upseg0605_211427.txt")
+
 
 pc3 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/teethscan.txt")
 pc4 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/teethtrue.txt")
