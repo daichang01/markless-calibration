@@ -65,13 +65,13 @@ def create_local_axis(point_cloud, size=0.01):
 
 
 # 加载点云
-pc1 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/edge_teeth.txt")
+pc1 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt")
 # pc2 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/teethtrue-seg.txt")
-pc2 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/auto-seg/upteeth/upseg0605_211427.txt")
+pc2 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/auto-seg/lowteeth/lowsegfilter0608_230559.txt")
 
 
-pc3 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/teethscan.txt")
-pc4 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/teethtrue.txt")
+pc3 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_scantoval.txt")
+pc4 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/auto-seg/valteeth/roifilter0608_230559.txt")
 
 ###################################################################### 原始点云 ##################################################################################
 pc1.paint_uniform_color([1, 0, 0])  # 红色表示源点云
@@ -184,7 +184,7 @@ axis_pc4_aligned = create_local_axis(pc4_aligned)
 
 # 可视化粗配准结果
 pc3_aligned.paint_uniform_color([1, 0, 0])  # 红色表示源点云
-pc4_aligned.paint_uniform_color([0, 1, 0])  # 绿色表示目标点云
+# pc4_aligned.paint_uniform_color([0, 1, 0])  # 绿色表示目标点云
 vis = o3d.visualization.Visualizer()
 vis.create_window(window_name='验证粗配准结果', width=800, height=600)
 vis.add_geometry(pc3_aligned)

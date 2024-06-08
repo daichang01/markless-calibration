@@ -16,8 +16,9 @@ import time
 class PointCloud2Subscriber(Node):
     def __init__(self):
         super().__init__('pcd_sub')
-        self.upsubscription = self.create_subscription(PointCloud2,  'upteeth_point_cloud', self.uplistener_callback, 10)
-        self.lowsubscription = self.create_subscription(PointCloud2,  'lowteeth_point_cloud', self.lowlistener_callback, 10)
+        # self.upsubscription = self.create_subscription(PointCloud2,  'upteeth_point_cloud', self.uplistener_callback, 10)
+        self.lowsubscription = self.create_subscription(PointCloud2,  'lowfront_point_cloud', self.lowlistener_callback, 10)
+        self.upsubscription = self.create_subscription(PointCloud2,  'roi_point_cloud', self.uplistener_callback, 10)
         # self.subscription  # 防止未使用变量警告
         self.uppoints = []
         self.upcolors = []
@@ -80,7 +81,8 @@ class PointCloud2Subscriber(Node):
         # 定时保存点云数据
         if self.uppoints:
             current_time = datetime.now().strftime("%m%d_%H%M%S")
-            filename = f"src/markless-calibration/pcd/auto-seg/upteeth/upseg{current_time}.txt"
+            # filename = f"src/markless-calibration/pcd/auto-seg/upteeth/upseg{current_time}.txt"
+            filename = f"src/markless-calibration/pcd/auto-seg/valteeth/roi{current_time}.txt"
             self.save_uppoint_cloud_to_txt(filename)
             # 清空点列表和颜色列表以准备下一个点云
             self.uppoints = []
@@ -107,7 +109,7 @@ class PointCloud2Subscriber(Node):
                     file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
                     point_count += 1 
             self.get_logger().info(f"{point_count} 个点已保存至 {filename}")
-            self.process_and_save_outliers(filename, filename.replace("upseg", "upsegfilter"))
+            self.process_and_save_outliers(filename, filename.replace("roi", "roifilter"))
         except Exception as e:
             self.get_logger().error(f"Failed to save point cloud to {filename}: {str(e)}")
 
@@ -120,7 +122,7 @@ class PointCloud2Subscriber(Node):
                 for point, color in zip(self.lowpoints, self.lowcolors):  
                     r, g, b = [int(c * 255) for c in color]
                     # if max(r, g, b) - min(r, g, b) < 80:
-                    file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
+                    file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n") 
                     point_count += 1
             self.get_logger().info(f"{point_count} 个点已保存至 {filename}")
             self.process_and_save_outliers(filename, filename.replace("lowseg", "lowsegfilter"))
@@ -162,7 +164,7 @@ class PointCloud2Subscriber(Node):
                     file.write(f"{point[0]} {point[1]} {point[2]} {r} {g} {b}\n")
                     point_count += 1 
             
-            self.get_logger().info(f"Processed point cloud saved to {output_filename},Total points saved: {point_count}")
+            self.get_logger().info(f"处理后 {output_filename},Total points saved: {point_count}")
         except Exception as e:
             self.get_logger().info(f"Failed to process and save point cloud: {str(e)}")
 
