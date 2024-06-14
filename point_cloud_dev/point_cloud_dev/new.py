@@ -12,6 +12,17 @@ def load_point_cloud(file_path):
         point_cloud.colors = o3d.utility.Vector3dVector(colors)
     return point_cloud
 
+def extract_iss_keypoints(point_cloud, salient_radius=0.01, non_max_radius=0.01, gamma_21=0.975, gamma_32=0.975, min_neighbors=5):
+    keypoints = o3d.geometry.keypoint.compute_iss_keypoints(
+        point_cloud,
+        salient_radius=salient_radius,
+        non_max_radius=non_max_radius,
+        gamma_21=gamma_21,
+        gamma_32=gamma_32,
+        min_neighbors=min_neighbors
+    )
+    return keypoints
+
 def compute_fpfh_feature(point_cloud):
     """
     计算点云的FPFH特征
@@ -19,15 +30,14 @@ def compute_fpfh_feature(point_cloud):
     :return: 计算得到的FPFH特征
     """
     radius_normal = 0.02  # 法线估计的半径
-    radius_feature = 0.1  # FPFH特征的半径
+    radius_feature = 0.05  # FPFH特征的半径
 
     # 估计点云法线
     point_cloud.estimate_normals(
-        o3d.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30) #搜多半径0.02，最多考虑30个邻近点
+        o3d.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30)
     )
 
     # 计算FPFH特征
-    # FPFH特征是一种描述点云局部几何特征的直方图，适用于点云配准等任务
     fpfh = o3d.pipelines.registration.compute_fpfh_feature(
         point_cloud,
         o3d.geometry.KDTreeSearchParamHybrid(radius=radius_feature, max_nn=100)
@@ -47,15 +57,15 @@ def execute_global_registration(source, target, source_fpfh, target_fpfh, distan
     """
     result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
         source, target, source_fpfh, target_fpfh,
-        mutual_filter=True,  # 使用互相关滤波
-        max_correspondence_distance=distance_threshold,  # 最大对应点距离阈值
-        estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),  # 使用点对点的变换估计方法
-        ransac_n=4,  # RANSAC的采样点数为4
+        mutual_filter=True,
+        max_correspondence_distance=distance_threshold,
+        estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
+        ransac_n=4,
         checkers=[
-            o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),  # 基于边长的一致性检查
-            o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)  # 基于距离的一致性检查
+            o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+            o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)
         ],
-        criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(4000000, 500)  # RANSAC收敛准则
+        criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(400000, 500)
     )
     return result.transformation
 
@@ -85,11 +95,11 @@ def create_local_axis(point_cloud, size=0.01):
     return axis
 
 def align_point_cloud(point_cloud, transformation):
-    points = np.asarray(point_cloud.points) # 获取点云坐标
-    points_homogeneous = np.hstack((points, np.ones((points.shape[0], 1)))) # 将点云坐标转换为齐次坐标
-    points_transformed = np.dot(points_homogeneous, transformation.T) # 应用变换矩阵
-    points_transformed = points_transformed[:, :3] # 恢复点云坐标
-    point_cloud.points = o3d.utility.Vector3dVector(points_transformed) # 更新点云坐标
+    points = np.asarray(point_cloud.points)
+    points_homogeneous = np.hstack((points, np.ones((points.shape[0], 1))))
+    points_transformed = np.dot(points_homogeneous, transformation.T)
+    points_transformed = points_transformed[:, :3]
+    point_cloud.points = o3d.utility.Vector3dVector(points_transformed)
     return point_cloud
 
 def main():
@@ -120,18 +130,26 @@ def main():
 
     ############################################################# 粗配准  ##################################################
 
+    # 提取ISS关键点
+    iss_salient_radius = 0.003
+    iss_non_max_radius = 0.0015
+    start_time_iss = time.time()
+    keypoints1 = extract_iss_keypoints(pc1, iss_salient_radius, iss_non_max_radius)
+    keypoints2 = extract_iss_keypoints(pc2, iss_salient_radius, iss_non_max_radius)
+    end_time_iss = time.time()
+    iss_time = end_time_iss - start_time_iss
+
     # 计算FPFH特征
     start_time_fpfh = time.time()
-    source_fpfh = compute_fpfh_feature(pc1)
-    target_fpfh = compute_fpfh_feature(pc2)
+    source_fpfh = compute_fpfh_feature(keypoints1)
+    target_fpfh = compute_fpfh_feature(keypoints2)
     end_time_fpfh = time.time()
     fpfh_time = end_time_fpfh - start_time_fpfh
 
-
     # 基于RANSAC的粗配准
-    distance_threshold = 0.001  # 根据数据集特性调整
+    distance_threshold = 0.01  # 根据数据集特性调整
     start_time_coarse = time.time()
-    transformation_ransac = execute_global_registration(pc1, pc2, source_fpfh, target_fpfh, distance_threshold)
+    transformation_ransac = execute_global_registration(keypoints1, keypoints2, source_fpfh, target_fpfh, distance_threshold)
     end_time_coarse = time.time()
     coarse_registration_time = end_time_coarse - start_time_coarse
 
@@ -146,10 +164,9 @@ def main():
     print("粗配准后的评估结果：")
     print(f"RMSE: {evaluation_coarse.inlier_rmse}, RMSE (Custom): {rmse_coarse}")
     print(f"MAE (Custom): {mae_coarse}")
-    print(f"fpfh特征提取耗时: {fpfh_time} 秒")
+    print(f"ISS关键点提取耗时: {iss_time} 秒")
+    print(f"FPFH特征提取耗时: {fpfh_time} 秒")
     print(f"粗配准耗时: {coarse_registration_time} 秒")
-
-    # print(f"Fitness: {evaluation_coarse.fitness}")
 
     # 为粗配准后的点云添加局部坐标轴
     axis_pc1_aligned = create_local_axis(pc1_aligned)
@@ -187,7 +204,6 @@ def main():
     print(f"RMSE: {evaluation_fine.inlier_rmse}, RMSE (Custom): {rmse_fine}")
     print(f"MAE (Custom): {mae_fine}")
     print(f"精配准耗时: {fine_registration_time} 秒")
-    # print(f"Fitness: {evaluation_fine.fitness}")
 
     # 为精配准后的点云添加局部坐标轴
     axis_pc1_aligned_icp = create_local_axis(pc1_aligned)
@@ -211,8 +227,7 @@ def main():
     axis_pc4_aligned = create_local_axis(pc4_aligned)
 
     # 可视化粗配准结果
-    pc3_aligned.paint_uniform_color([0,1, 0])  # 红色表示源点云
-    # pc4_aligned.paint_uniform_color([0, 1, 0])  # 绿色表示目标点云
+    pc3_aligned.paint_uniform_color([0, 1, 0])  # 绿色表示源点云
     vis = o3d.visualization.Visualizer()
     vis.create_window(window_name='验证粗配准结果', width=800, height=600)
     vis.add_geometry(pc3_aligned)

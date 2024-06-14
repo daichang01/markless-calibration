@@ -1,6 +1,33 @@
 import open3d as o3d
 import numpy as np
+import time
 
+def visualize_initial_point_clouds(pc1, pc2, window_name='untitle', width=800, height=600):
+    # Set colors for point clouds
+    pc1.paint_uniform_color([0, 1, 0])  # Green color for the second point cloud
+    # pc2.paint_uniform_color([0, 1, 0])  # 保留原始rgb
+
+    # Create coordinate frames
+    axis_pc = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.01)
+    axis_pc1 = create_local_axis(pc1)
+    axis_pc2 = create_local_axis(pc2)
+
+    # Setup the visualizer
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(window_name=window_name, width=width, height=height)
+    vis.add_geometry(pc1)
+    vis.add_geometry(pc2)
+    vis.add_geometry(axis_pc)
+    vis.add_geometry(axis_pc1)
+    vis.add_geometry(axis_pc2)
+    
+    # Run the visualizer
+    vis.run()
+    vis.destroy_window()
+
+def create_local_axis(point_cloud, size=0.01):
+    centroid = np.mean(np.asarray(point_cloud.points), axis=0)
+    return o3d.geometry.TriangleMesh.create_coordinate_frame(size=size, origin=centroid)
 def load_point_cloud(file_path):
     data = np.loadtxt(file_path)
     points = data[:, :3]
@@ -73,30 +100,13 @@ pc2 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/
 pc3 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_scantoval.txt")
 pc4 = load_point_cloud("/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/auto-seg/valteeth/roifilter0608_230559.txt")
 
-###################################################################### 原始点云 ##################################################################################
-pc1.paint_uniform_color([1, 0, 0])  # 红色表示源点云
-pc2.paint_uniform_color([0, 1, 0])  # 绿色表示目标点云
-# 添加坐标轴
-axis_pc = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.01)
-axis_pc1 = create_local_axis(pc1)
-axis_pc2 = create_local_axis(pc2)
+visualize_initial_point_clouds(pc1, pc2, window_name='原始点云')
 
-
-# o3d.visualization.draw_geometries([pc1, pc2])
-vis = o3d.visualization.Visualizer()
-vis.create_window(window_name='原始点云', width=800, height=600)
-vis.add_geometry(pc1)
-vis.add_geometry(pc2)
-# 添加坐标轴
-vis.add_geometry(axis_pc)
-vis.add_geometry(axis_pc1)
-vis.add_geometry(axis_pc2)
-vis.run()
-vis.destroy_window()
 
 ############################################################# 粗配准  ##################################################
 
 # 应用 PCA 进行配准
+start_time_pca= time.time()
 transformation1 = apply_pca(pc1)
 transformation2 = apply_pca(pc2)
 pc1_aligned = align_point_cloud(pc1, transformation1)
@@ -107,13 +117,15 @@ centroid_pc2 = compute_centroid(pc2_aligned)
 translation_vector = centroid_pc2 - centroid_pc1
 pc1_aligned = translate_point_cloud(pc1_aligned, translation_vector)
 
-
+end_time_pca = time.time()
+pca_time = end_time_pca - start_time_pca
 
 
 print("原始点云的 PCA 结果：")
 print(f"PCA1 结果：\n{transformation1}")
 print(f"PCA2 结果：\n{transformation2}")
 print(f"平移向量：\n{translation_vector}")
+print(f"pca粗配准耗时: {pca_time} 秒")
 
 
 # 评估粗配准结果
@@ -123,26 +135,8 @@ print("粗配准后的评估结果：")
 print(f"RMSE: {evaluation_coarse.inlier_rmse}")
 print(f"Fitness: {evaluation_coarse.fitness}")
 
-# 为粗配准后的点云添加局部坐标轴
-axis_pc1_aligned = create_local_axis(pc1_aligned)
-axis_pc2_aligned = create_local_axis(pc2_aligned)
+visualize_initial_point_clouds(pc1_aligned, pc2_aligned, window_name='粗配准结果')
 
-
-# 可视化粗配准结果
-pc1_aligned.paint_uniform_color([1, 0, 0])  # 红色表示源点云
-pc2_aligned.paint_uniform_color([0, 1, 0])  # 绿色表示目标点云
-
-
-vis = o3d.visualization.Visualizer()
-vis.create_window(window_name='粗配准结果', width=800, height=600)
-vis.add_geometry(pc1_aligned)
-vis.add_geometry(pc2_aligned)
-
-vis.add_geometry(axis_pc)
-vis.add_geometry(axis_pc1_aligned)
-vis.add_geometry(axis_pc2_aligned)
-vis.run()
-vis.destroy_window()
 
 ############################################################## 精配准 ###################################################3
 
@@ -159,56 +153,16 @@ print("精配准后的评估结果：")
 print(f"RMSE: {evaluation_fine.inlier_rmse}")
 print(f"Fitness: {evaluation_fine.fitness}")
 
-# 为精配准后的点云添加局部坐标轴
-axis_pc1_aligned_icp = create_local_axis(pc1_aligned)
-axis_pc2_aligned_icp = create_local_axis(pc2_aligned)
+visualize_initial_point_clouds(pc1_aligned, pc2_aligned, window_name='精配准结果')
 
-# 可视化配准结果
-# o3d.visualization.draw_geometries([pc1_aligned, pc2_aligned])
-vis = o3d.visualization.Visualizer()
-vis.create_window(window_name='精配准结果', width=800, height=600)
-vis.add_geometry(pc1_aligned)
-vis.add_geometry(pc2_aligned)
-vis.add_geometry(axis_pc)
-vis.add_geometry(axis_pc1_aligned_icp)
-vis.add_geometry(axis_pc2_aligned_icp)
-vis.run()
-vis.destroy_window()
 
 #######################################################验证######################################################
 pc3_aligned = align_point_cloud(pc3, transformation1)
 pc3_aligned = translate_point_cloud(pc3_aligned, translation_vector)
 pc4_aligned = align_point_cloud(pc4, transformation2)
-axis_pc3_aligned = create_local_axis(pc3_aligned)
-axis_pc4_aligned = create_local_axis(pc4_aligned)
+visualize_initial_point_clouds(pc3_aligned, pc4_aligned, window_name='验证粗配准结果')
 
-# 可视化粗配准结果
-pc3_aligned.paint_uniform_color([0, 1, 0])  # 红色表示源点云
-# pc4_aligned.paint_uniform_color([0, 1, 0])  # 绿色表示目标点云
-vis = o3d.visualization.Visualizer()
-vis.create_window(window_name='验证粗配准结果', width=800, height=600)
-vis.add_geometry(pc3_aligned)
-vis.add_geometry(pc4_aligned)
-vis.add_geometry(axis_pc)
-vis.add_geometry(axis_pc3_aligned)
-vis.add_geometry(axis_pc4_aligned)
-vis.run()
-vis.destroy_window()
+
 
 pc3_aligned.transform(transformation_icp)
-# 为精配准后的点云添加局部坐标轴
-axis_pc3_aligned_icp = create_local_axis(pc3_aligned)
-axis_pc4_aligned_icp = create_local_axis(pc4_aligned)
-
-# 可视化配准结果
-# o3d.visualization.draw_geometries([pc1_aligned, pc2_aligned])
-vis = o3d.visualization.Visualizer()
-vis.create_window(window_name='验证精配准结果', width=800, height=600)
-vis.add_geometry(pc3_aligned)
-vis.add_geometry(pc4_aligned)
-vis.add_geometry(axis_pc)
-vis.add_geometry(axis_pc3_aligned_icp)
-vis.add_geometry(axis_pc4_aligned_icp)
-vis.run()
-vis.destroy_window()
-
+visualize_initial_point_clouds(pc3_aligned, pc4_aligned, window_name='验证精配准结果')
