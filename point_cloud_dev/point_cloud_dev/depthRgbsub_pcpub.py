@@ -15,6 +15,8 @@ import torch
 from datetime import datetime
 from ultralytics import YOLO
 from pathlib import Path
+from tf2_ros import StaticTransformBroadcaster
+from geometry_msgs.msg import TransformStamped
 
 
 class ImageSubscriber(Node):
@@ -40,8 +42,6 @@ class ImageSubscriber(Node):
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
         self.model = YOLO("best.pt") #yolov8在本地训练的实例分割模型
         
-
-
     def save_images(self):
         if self.latest_color_image is not None and self.latest_depth_image is not None:
             current_time = datetime.now().strftime("%m%d_%H%M%S")
@@ -230,7 +230,7 @@ class ImageSubscriber(Node):
         return contours, large_contours
 
     def create_pointcloud2_msg(self, points, idx):
-        header = Header(frame_id='camera_link', stamp=self.get_clock().now().to_msg())
+        header = Header(frame_id='camera_infra1_optical_frame', stamp=self.get_clock().now().to_msg())
         fields = [PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
                 PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
                 PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
