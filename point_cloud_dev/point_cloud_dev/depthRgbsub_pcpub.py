@@ -125,9 +125,9 @@ class ImageSubscriber(Node):
             # 得到感兴趣区域
             iso_crop = isolated[y1:y2, x1:x2]
 
-            cv2.namedWindow(f"{cls_idx}_{label}", cv2.WINDOW_NORMAL)
-            cv2.imshow(f"{cls_idx}_{label}", iso_crop)
-            cv2.waitKey(5)
+            # cv2.namedWindow(f"{cls_idx}_{label}", cv2.WINDOW_NORMAL)
+            # cv2.imshow(f"{cls_idx}_{label}", iso_crop)
+            # cv2.waitKey(5)
 
             ############################################## 牙齿轮廓提取 #####################################################
             contours, large_contours = self.edge_extration(x1, y1, x2, y2, b_mask, iso_crop)

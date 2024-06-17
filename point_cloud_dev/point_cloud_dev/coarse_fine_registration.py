@@ -1,103 +1,13 @@
-import open3d as o3d
-import numpy as np
-import time
-import rclpy
-import struct
-from rclpy.node import Node
-from std_msgs.msg import Header
-from sensor_msgs.msg import PointCloud2, PointField
-import sensor_msgs_py.point_cloud2 as pc2
+from .utils import *
 
- ############################################## utils ##############################################
-def visualize_initial_point_clouds(pc1, pc2, window_name='untitle', width=800, height=600):
-    # Set colors for point clouds
-    pc1.paint_uniform_color([0, 1, 0])  # Green color for the second point cloud
-    # pc2.paint_uniform_color([0, 1, 0])  # 保留原始rgb
-
-    # Create coordinate frames
-    axis_pc = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.01)
-    axis_pc1 = create_local_axis(pc1)
-    axis_pc2 = create_local_axis(pc2)
-
-    # Setup the visualizer
-    vis = o3d.visualization.Visualizer()
-    vis.create_window(window_name=window_name, width=width, height=height)
-    vis.add_geometry(pc1)
-    vis.add_geometry(pc2)
-    vis.add_geometry(axis_pc)
-    vis.add_geometry(axis_pc1)
-    vis.add_geometry(axis_pc2)
-    
-    # Run the visualizer
-    vis.run()
-    vis.destroy_window()
-
-def create_local_axis(point_cloud, size=0.01):
-    centroid = np.mean(np.asarray(point_cloud.points), axis=0)
-    return o3d.geometry.TriangleMesh.create_coordinate_frame(size=size, origin=centroid)
-def load_point_cloud(file_path):
-    data = np.loadtxt(file_path)
-    points = data[:, :3]
-    colors = data[:, 3:6] / 255.0 if data.shape[1] > 3 else None
-    point_cloud = o3d.geometry.PointCloud()
-    point_cloud.points = o3d.utility.Vector3dVector(points)
-    if colors is not None:
-        point_cloud.colors = o3d.utility.Vector3dVector(colors)
-    return point_cloud
-
-def pointcloud2_to_open3d(pointcloud2_msg):
-    points_list = list(pc2.read_points(pointcloud2_msg, field_names=("x", "y", "z"), skip_nans=True))
-    if not points_list:
-        return None
-    # 直接提取 x, y, z 数据
-    points = np.array([[p[0], p[1], p[2]] for p in points_list], dtype=np.float32)
-    point_cloud = o3d.geometry.PointCloud()
-    point_cloud.points = o3d.utility.Vector3dVector(points)
-    return point_cloud
-
-def evaluate_registration(source, target, transformation, threshold):
-    evaluation = o3d.pipelines.registration.evaluate_registration(
-        source, target,max_correspondence_distance= threshold, transformation= transformation)
-    fitness = evaluation.fitness # 重叠区域（内部对应数/源中的点数）。越高越好。
-    inlier_rmse = evaluation.inlier_rmse # 所有内部对应关系的 RMSE。越低越好。
-    return fitness, inlier_rmse
-
-def convert_to_pointcloud2(point_cloud):
-    points = np.asarray(point_cloud.points)
-    if point_cloud.colors:
-        colors = (np.asarray(point_cloud.colors) * 255).astype(np.uint8)
-    else:
-        colors = np.zeros((points.shape[0], 3), dtype=np.uint8)
-
-    header = Header()
-    header.stamp = rclpy.time.Time().to_msg()
-    header.frame_id = 'camera_infra1_optical_frame'
-
-    fields = [
-        PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-        PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-        PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-        PointField(name='r', offset=12, datatype=PointField.UINT8, count=1),
-        PointField(name='g', offset=13, datatype=PointField.UINT8, count=1),
-        PointField(name='b', offset=14, datatype=PointField.UINT8, count=1),
-    ]
-
-    cloud_data = []
-    for i in range(points.shape[0]):
-        x, y, z = points[i]
-        r, g, b = colors[i]
-        cloud_data.append(struct.pack('fffBBB', x, y, z, r, g, b))
-
-    cloud_data = b''.join(cloud_data)
-    return PointCloud2(header=header, height=1, width=points.shape[0], fields=fields, is_bigendian=False, point_step=15, row_step=15 * points.shape[0], data=cloud_data, is_dense=True)
-
+ 
 class PointCloudRegistration(Node):
     def __init__(self, threshold=0.001):
         super().__init__('transform_pcd_publisher')
         self.threshold = threshold
         self.pub_ori = self.create_publisher(PointCloud2, '/ori_pcd_topic', 10)
         self.pub_trans = self.create_publisher(PointCloud2, '/trans_pcd_topic', 10)
-        self.timer = self.create_timer(1.0, self.timer_callback)
+        self.timer = self.create_timer(0.5, self.timer_callback)
         self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
         self.source_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
         self.valsource_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_scantoval.txt"
@@ -135,21 +45,57 @@ class PointCloudRegistration(Node):
         # self.rviztransform = load_point_cloud(self.valsource_path)
         # self.rviztransform.transform(self.combined_transformation)
     
-    # 下正牙配准
+    ################################################ lowfront 配准 #############################################
     def lowfront_callback(self, msg):
         self.target = pointcloud2_to_open3d(msg)
         if self.target is None or len(self.target.points) == 0:
             self.get_logger().info("Received empty target point cloud, skipping registration")
             return
-        self.get_logger().info("Received new target point cloud")
+        self.get_logger().info(f"Received new target point cloud with {len(self.target.points)} points)")
+
+        # 去除离群值
+        self.target, ind = self.target.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.5)
+        num_outliers = np.sum(np.logical_not(ind))
+        self.get_logger().info(f"Removed {num_outliers} outliers")
+
         # 进行配准
         self.source = load_point_cloud(self.source_path)
-
-        s, t, vs, vt,coarse_transformation = self.fpfh_ransac_coarse_registration(self.source, self.target, None, None, self.threshold) # ransac粗配准
-        fine_transformation = self.icp_fine_registration(s, t ,vs,  vt, self.threshold) # 精配准
-        self.combined_transformation = np.dot(fine_transformation, coarse_transformation)
         self.rviztransform = load_point_cloud(self.valsource_path)
-        self.rviztransform.transform(self.combined_transformation)
+    # pca粗配准 + icp精配准
+        s, t, vs, vt, coarse_transformation_source, coarse_transformation_target,translation_vector = self.pca_coarse_registration(self.source, self.target, None, None, self.threshold)
+
+        # 可视化粗配准结果
+        visualize_initial_point_clouds(s, t, window_name='粗配准结果')
+
+        # 将目标点云的变换反向应用到源点云上。
+        # inverse_transformation_target = np.linalg.inv(coarse_transformation_target)
+            # 手动计算目标变换的逆
+        R = coarse_transformation_target[:3, :3]
+        t = coarse_transformation_target[:3, 3]
+        inverse_R = R.T
+        inverse_t = -np.dot(inverse_R, t)
+        inverse_transformation_target = np.eye(4)
+        inverse_transformation_target[:3, :3] = inverse_R
+        inverse_transformation_target[:3, 3] = inverse_t
+        # 包含平移矢量的变换矩阵
+        translation_matrix = np.eye(4)
+        translation_matrix[:3, 3] = translation_vector
+        combined_coarse_transformation = np.dot(translation_matrix, np.dot(inverse_transformation_target, coarse_transformation_source))
+        # 应用最终的变换矩阵到源点云
+        self.source.transform(combined_coarse_transformation)
+        # 可视化粗配准结果
+        visualize_initial_point_clouds(self.source, self.target, window_name='针对source粗配准结果')
+        fine_transformation = self.icp_fine_registration(self.source, self.target ,vs,  vt, self.threshold)
+
+        self.combined_transformation = np.dot(fine_transformation, combined_coarse_transformation)
+    # ransac粗配准  + icp精配准
+        # s, t, vs, vt,coarse_transformation = self.fpfh_ransac_coarse_registration(self.source, self.target, None, None, self.threshold) # ransac粗配准
+        # icp精配准
+        # fine_transformation = self.icp_fine_registration(s, t ,vs,  vt, self.threshold) 
+        # self.combined_transformation = np.dot(fine_transformation, coarse_transformation)
+        
+        self.rviztransform.transform(self.combined_transformation) #粗配准 + 精配准
+        # self.rviztransform.transform(coarse_transformation) # 只进行粗配准
 
 
 
@@ -174,7 +120,8 @@ class PointCloudRegistration(Node):
             3, [
                 o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
                 o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)
-            ], o3d.pipelines.registration.RANSACConvergenceCriteria(20000, 500))
+            ], o3d.pipelines.registration.RANSACConvergenceCriteria(40000, 500))
+
         return result
 
     def fpfh_ransac_coarse_registration(self, source, target, valsource, valtarget, threshold):
@@ -190,7 +137,8 @@ class PointCloudRegistration(Node):
         end_time_ransac = time.time()
         ransac_time = end_time_ransac - start_time_ransac
         source.transform(result_ransac.transformation)
-        
+        print("粗配准后的变换矩阵：")
+        print(f"{result_ransac.transformation}")
         print("ransac粗配准后的评估结果：")
         print(f"RMSE: {inlier_rmse}")
         print(f"Fitness: {fitness}")
@@ -247,12 +195,12 @@ class PointCloudRegistration(Node):
     def pca_coarse_registration(self, source, target, valsource, valtarget, threshold):
         # 应用 PCA 进行配准
         start_time_pca= time.time()
-        transformation1 = self.apply_pca(source)
-        # transformation1 = correct_pca_orientation(transformation1) #主轴校正
-        transformation2 = self.apply_pca(target)
-        # transformation2 = correct_pca_orientation(transformation2) #主轴校正
-        source_aligned = self.align_point_cloud(source, transformation1)
-        target_aligned = self.align_point_cloud(target, transformation2)
+        transformation_source = self.apply_pca(source)
+        # transformation_source = self.correct_pca_orientation(transformation_source) #主轴校正
+        transformation_target = self.apply_pca(target)
+        # transformation_target = self.correct_pca_orientation(transformation_target) #主轴校正
+        source_aligned = self.align_point_cloud(source, transformation_source)
+        target_aligned = self.align_point_cloud(target, transformation_target)
         #计算平移向量
         centroid_source = self.compute_centroid(source_aligned)
         centroid_target = self.compute_centroid(target_aligned)
@@ -262,8 +210,8 @@ class PointCloudRegistration(Node):
         end_time_pca = time.time()
         pca_time = end_time_pca - start_time_pca
 
-        print(f"PCA1 结果：\n{transformation1}")
-        print(f"PCA2 结果：\n{transformation2}")
+        print(f"PCA source 结果：\n{transformation_source}")
+        print(f"PCA target 结果：\n{transformation_target}")
         print(f"平移向量：\n{translation_vector}")
         print(f"pca粗配准耗时: {pca_time} 秒")
 
@@ -273,13 +221,13 @@ class PointCloudRegistration(Node):
         print("粗配准后的评估结果：")
         print(f"RMSE: {inlier_rmse}")
         print(f"Fitness: {fitness}")
-        visualize_initial_point_clouds(source_aligned, target_aligned, window_name='粗配准结果')
-
-        valsource_aligned = self.align_point_cloud(valsource, transformation1)
-        valsource_aligned = self.translate_point_cloud(valsource, translation_vector)
-        valtarget_aligned = self.align_point_cloud(valtarget, transformation2)
-        visualize_initial_point_clouds(valsource_aligned, valtarget_aligned, window_name='验证粗配准结果')
-        return source_aligned, target_aligned, valsource_aligned, valtarget_aligned
+        # visualize_initial_point_clouds(source_aligned, target_aligned, window_name='粗配准结果')
+        valsource_aligned, valtarget_aligned = None, None
+        # valsource_aligned = self.align_point_cloud(valsource, transformation_source)
+        # valsource_aligned = self.translate_point_cloud(valsource, translation_vector)
+        # valtarget_aligned = self.align_point_cloud(valtarget, transformation_target)
+        # visualize_initial_point_clouds(valsource_aligned, valtarget_aligned, window_name='验证粗配准结果')
+        return source_aligned, target_aligned, valsource_aligned, valtarget_aligned, transformation_source, transformation_target, translation_vector
 
 
     ############################################ icp精配准 ###################################################################
