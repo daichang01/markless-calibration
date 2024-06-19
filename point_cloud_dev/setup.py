@@ -22,9 +22,9 @@ setup(
         'console_scripts': [
             'oripointcloud_sub = point_cloud_dev.oripointcloud_sub:main',
             'segpointcloud_sub = point_cloud_dev.segpointcloud_sub:main',
-            'preproceing = point_cloud_dev.preproceing:main',
-            'showPointCloud = point_cloud_dev.showPointCloud:main',
             'depthRgbsub_pcpub = point_cloud_dev.depthRgbsub_pcpub:main',
+            'scanpcd_pub = point_cloud_dev.scanpcd_pub:main',
+            'coarse_fine_registration = point_cloud_dev.coarse_fine_registration:main'
         ],
     },
 )

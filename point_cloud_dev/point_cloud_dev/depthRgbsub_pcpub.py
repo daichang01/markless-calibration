@@ -82,12 +82,11 @@ class ImageSubscriber(Node):
         # 归一化深度图像以增强显示效果
         cv_depth_normalized = cv2.normalize(self.latest_depth_image, None, 0, 255, cv2.NORM_MINMAX)
         cv_depth_normalized = np.uint8(cv_depth_normalized)  # 转换为8位图像
-        # 显示处理后的RGB图像
-        cv2.imshow("Color Image",  self.latest_color_image)
-        # 显示处理后的深度图像
+        # 显示处理后的RGB和深度图像
+        # cv2.imshow("Color Image",  self.latest_color_image)
         # cv2.imshow("Depth Image", cv_depth_normalized)
-        if cv2.waitKey(10) & 0xFF == ord('q'):
-            cv2.destroyAllWindows()
+        # if cv2.waitKey(10) & 0xFF == ord('q'):
+        #     cv2.destroyAllWindows()
 ############################################################### yolo检测demo ################3#########################################
         yolo_results = self.model.predict(self.latest_color_image)
         # yolo_results = None

@@ -7,6 +7,7 @@ from rclpy.node import Node
 from std_msgs.msg import Header
 from sensor_msgs.msg import PointCloud2, PointField
 import sensor_msgs_py.point_cloud2 as pc2
+from scipy.interpolate import interp1d, CubicSpline, griddata
 
 ############################################## utils ##############################################
 def visualize_initial_point_clouds(pc1, pc2, window_name='untitle', width=1000, height=800):
@@ -90,3 +91,83 @@ def convert_to_pointcloud2(point_cloud):
 
     cloud_data = b''.join(cloud_data)
     return PointCloud2(header=header, height=1, width=points.shape[0], fields=fields, is_bigendian=False, point_step=15, row_step=15 * points.shape[0], data=cloud_data, is_dense=True)
+
+
+def linear_interpolation(pcd, num_points):
+    """
+    对点云进行线性插值
+
+    Args:
+        pcd (open3d.geometry.PointCloud): 输入点云
+        num_points (int): 插值后的点云包含的点的数量
+
+    Returns:
+        open3d.geometry.PointCloud: 插值后的点云
+    """
+    # 提取点云坐标
+    points = np.asarray(pcd.points)
+    
+    # 确保点云按某个维度排序，例如按x坐标
+    sorted_indices = np.argsort(points[:, 0])
+    points = points[sorted_indices]
+
+    # 原始点的x坐标
+    x_original = points[:, 0]
+    
+    # 创建新的x坐标，均匀分布在原始x坐标范围内
+    x_new = np.linspace(x_original.min(), x_original.max(), num_points)
+    
+    # 对每个维度进行线性插值
+    interpolated_points = []
+    for i in range(points.shape[1]):
+        f = interp1d(x_original, points[:, i], kind='linear')
+        interpolated_points.append(f(x_new))
+    
+    interpolated_points = np.stack(interpolated_points, axis=-1)
+    
+    # 创建新的点云
+    interpolated_pcd = o3d.geometry.PointCloud()
+    interpolated_pcd.points = o3d.utility.Vector3dVector(interpolated_points)
+    
+    return interpolated_pcd
+
+def ensure_strictly_increasing(x):
+    """确保 x 是严格递增的，如果不是，则添加微小的随机扰动"""
+    for i in range(1, len(x)):
+        if x[i] <= x[i - 1]:
+            x[i] = x[i - 1] + np.random.uniform(1e-10, 1e-9)
+    return x
+def spline_interpolation(pcd, num_points):
+    points = np.asarray(pcd.points)
+
+    # 对点进行排序以确保 x 轴是递增的
+    sorted_indices = np.argsort(points[:, 0])
+    points = points[sorted_indices]
+
+    # 获取 x, y, z 轴的原始数据点
+    x_original = points[:, 0]
+    y_original = points[:, 1]
+    z_original = points[:, 2]
+
+    # 确保 x 轴是严格递增的
+    x_original = ensure_strictly_increasing(x_original)
+
+
+    # 生成新的 x 轴数据点，范围在原始数据点范围内
+    x_new = np.linspace(x_original.min(), x_original.max(), num_points)
+
+    # 使用 CubicSpline 进行插值
+    cs_y = CubicSpline(x_original, y_original)
+    cs_z = CubicSpline(x_original, z_original)
+
+    y_new = cs_y(x_new)
+    z_new = cs_z(x_new)
+
+    interpolated_points = np.stack((x_new, y_new, z_new), axis=-1)
+
+    # 创建新的点云
+    interpolated_pcd = o3d.geometry.PointCloud()
+    interpolated_pcd.points = o3d.utility.Vector3dVector(interpolated_points)
+
+    return interpolated_pcd
+
