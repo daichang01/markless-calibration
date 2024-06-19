@@ -1,5 +1,6 @@
 from .utils import *
 from scipy.spatial import cKDTree
+from collections import deque, Counter
 
 class FPFHRegistration:
     def compute_fpfh_feature(self, point_cloud, threshold):
@@ -77,8 +78,6 @@ class PCARegistration:
         best_transformation = None
         best_combination = None
 
-        start_time_pca = time.time()
-
         # 遍历所有 8 种可能的主轴方向组合
         for i in range(8):
             signs = [(-1 if i & (1 << bit) else 1) for bit in range(3)]
@@ -93,47 +92,35 @@ class PCARegistration:
             if mse < best_mse:
                 best_mse = mse
                 best_transformation = R, t
-                best_combination = signs
+                best_combination = tuple(signs)
             
             # 生成 4x4 变换矩阵
             coarse_transformation = np.eye(4)
             coarse_transformation[:3, :3] = best_transformation[0]
             coarse_transformation[:3, 3] = best_transformation[1]
         
-        end_time_pca = time.time()
-        pca_time = end_time_pca - start_time_pca
         source_cloud.transform(coarse_transformation)
-        print("PCA粗配准后的变换矩阵：")
-        print(f"{coarse_transformation}")
 
-        print("PCA粗配准后的评估结果：")
-        print(f"Best MSE: {best_mse}")
-        print(f"Best Axis Flip Combination: {best_combination}")
-        print(f"pca粗配准耗时: {pca_time} 秒")
+        
         return coarse_transformation, source_cloud, best_mse, best_combination
+    
+
     
 class ICPRegistration:
     def icp_fine_registration(self, source, target, threshold=0.02):
-        start_time_icp = time.time()
+        
         trans_init = np.eye(4)
         reg_p2p = o3d.pipelines.registration.registration_icp(
             source, target, threshold, trans_init,
             o3d.pipelines.registration.TransformationEstimationPointToPoint())
         transformation_icp = reg_p2p.transformation
 
-        print("精配准后的变换矩阵：")
-        print(f"{transformation_icp}")
-
         # 评估精配准结果
         fitness, inlier_rmse = evaluate_registration(source, target, transformation_icp, threshold)
-        end_time_icp = time.time()
-        icp_time = end_time_icp - start_time_icp
+
         source.transform(transformation_icp)
-        print("精配准后的评估结果：")
-        print(f"RMSE: {inlier_rmse}")
-        print(f"Fitness: {fitness}")
-        print(f"icp精配准耗时: {icp_time} 秒")
-        return transformation_icp
+       
+        return transformation_icp, fitness, inlier_rmse
  
 class PointCloudRegistration(Node):
     def __init__(self, threshold=0.001):
@@ -151,6 +138,9 @@ class PointCloudRegistration(Node):
         self.pca_registrator = PCARegistration()
         self.fpfh_registrator = FPFHRegistration()
         self.icp_registrator = ICPRegistration()
+
+        self.combination_queue = deque(maxlen=30)
+        self.most_frequent_combination = None
 ################################################ lowfront pipeline #############################################
     def lowfront_callback(self, msg):
         self.target = pointcloud2_to_open3d(msg)
@@ -171,18 +161,59 @@ class PointCloudRegistration(Node):
         # self.source = linear_interpolation(self.source, num_interpolated_points)
         # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
     ####################  pca粗配准 + icp精配准 ##########################################################
-        coarse_transformation, transformed_source_cloud,best_mse, best_combination = self.pca_registrator.find_best_orientation(self.source, self.target)
-        fine_transformation = self.icp_registrator.icp_fine_registration(transformed_source_cloud, self.target, self.threshold)
+        start_time_pca = time.time()
+        coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = \
+            self.pca_registrator.find_best_orientation(self.source, self.target)
+        # 更新组合队列
+        self.combination_queue.append(best_frequent_combination)
+        # 计算出现次数最多的组合
+        if len(self.combination_queue) == self.combination_queue.maxlen:
+            combination_counter = Counter(self.combination_queue)
+            self.most_frequent_combination = combination_counter.most_common(1)[0][0]
+            self.get_logger().info(f"Most Frequent Combination: {self.most_frequent_combination}")
+        else:
+            print("Combination Queue is not full yet.")
+        
+        if best_frequent_combination != self.most_frequent_combination:
+            self.get_logger().info(f"Skipping callback due to combination mismatch: {best_frequent_combination}")
+            return
+       
+        # _, transformed_source_cloud, _, combination = self.pca_registrator.find_best_orientation(self.source, self.target)
+        
+        end_time_pca = time.time()
+
+        pca_time = end_time_pca - start_time_pca
+        print("PCA粗配准后的变换矩阵：")
+        print(f"{coarse_transformation}")
+        print("PCA粗配准后的评估结果：")
+        print(f"Best MSE: {best_mse}")
+        print(f"Best Axis Flip Combination: {best_frequent_combination}")
+        print(f"pca粗配准共计耗时: {pca_time} 秒")
+
+        start_time_icp = time.time()
+        fine_transformation, fitness, inlier_rmse = self.icp_registrator.icp_fine_registration \
+            (transformed_source_cloud, self.target, self.threshold)
+        end_time_icp = time.time()
+        icp_time = end_time_icp - start_time_icp
+        print("精配准后的变换矩阵：")
+        print(f"{fine_transformation}")
+        print("精配准后的评估结果：")
+        print(f"RMSE: {inlier_rmse}")
+        print(f"Fitness: {fitness}")
+        print(f"icp精配准耗时: {icp_time} 秒")
+        
+        
         combined_transformation = np.dot(fine_transformation, coarse_transformation) 
-    #################### ransac粗配准  + icp精配准 #######################################################
-        # coarse_transformation, transformed_source_cloud = self.fpfh_registrator.fpfh_ransac_coarse_registration(self.source, self.target,self.threshold)
-        # fine_transformation = self.icp_registrator.icp_fine_registration(transformed_source_cloud, self.target ,self.threshold) 
-        # combined_transformation = np.dot(fine_transformation, coarse_transformation)
-    # 最终可视化   
         self.rvizpcd.transform(combined_transformation) #粗配准 + 精配准
         # self.rvizpcd.transform(coarse_transformation) # 只进行粗配准
         self.publish_point_cloud(self.pub_trans, self.rvizpcd)
         print("publish trans scan point cloud !")
+#################### ransac粗配准  + icp精配准 #######################################################
+    # coarse_transformation, transformed_source_cloud = self.fpfh_registrator.fpfh_ransac_coarse_registration(self.source, self.target,self.threshold)
+    # fine_transformation = self.icp_registrator.icp_fine_registration(transformed_source_cloud, self.target ,self.threshold) 
+    # combined_transformation = np.dot(fine_transformation, coarse_transformation)
+############################# 最终可视化 ################################   
+        
 
 
     def timer_callback(self):
