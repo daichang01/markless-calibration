@@ -28,7 +28,8 @@ class ImageSubscriber(Node):
         self.lowfront_publisher = self.create_publisher(PointCloud2, 'lowfront_point_cloud', 10)
         # self.lowteeth_publisher = self.create_publisher(PointCloud2, 'lowteeth_point_cloud', 10)
         self.roi_publisher = self.create_publisher(PointCloud2, 'roi_point_cloud', 10)
-        self.ts = message_filters.ApproximateTimeSynchronizer([self.color_sub, self.depth_sub], 10, 0.1)
+        self.processed_image_publisher = self.create_publisher(Image, 'processed_image', 10)
+        self.ts = message_filters.ApproximateTimeSynchronizer([self.color_sub, self.depth_sub], 10, 0.05)
         self.ts.registerCallback(self.callback)
 
         self.latest_color_image = None
@@ -142,10 +143,11 @@ class ImageSubscriber(Node):
 
                 overlaid_image = cv2.addWeighted(iso_crop, 0.7, mask, 0.3, 0)
 
-                cv2.namedWindow(f"{cls_idx}_{label} Overlaid", cv2.WINDOW_NORMAL)
+                # cv2.namedWindow(f"{cls_idx}_{label} Overlaid", cv2.WINDOW_NORMAL)
                 # cv2.imshow(f"{cls_idx}_{label}mask", mask)
-                cv2.imshow(f"{cls_idx}_{label} Overlaid", overlaid_image)
-                cv2.waitKey(5)
+                # cv2.imshow(f"{cls_idx}_{label} Overlaid", overlaid_image)
+                # cv2.waitKey(5)
+                self.publish_processed_image(overlaid_image)
 
             ###############################  深度图边缘转点云 ##################################################
             start_x, end_x = x1, x2
@@ -227,6 +229,10 @@ class ImageSubscriber(Node):
             print(f"Contour {i} has {num_points} points:")
             
         return contours, large_contours
+    
+    def publish_processed_image(self, image):
+        image_msg = self.bridge.cv2_to_imgmsg(image, encoding="bgr8")
+        self.processed_image_publisher.publish(image_msg)
 
     def create_pointcloud2_msg(self, points, idx):
         header = Header(frame_id='camera_infra1_optical_frame', stamp=self.get_clock().now().to_msg())

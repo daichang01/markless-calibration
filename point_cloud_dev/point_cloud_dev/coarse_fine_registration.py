@@ -127,6 +127,7 @@ class PointCloudRegistration(Node):
         super().__init__('transform_pcd_publisher')
         self.threshold = threshold
         self.pub_ori = self.create_publisher(PointCloud2, '/ori_pcd_topic', 10)
+        self.pub_target = self.create_publisher(PointCloud2, '/target_pcd_topic', 10)
         self.pub_trans = self.create_publisher(PointCloud2, '/trans_pcd_topic', 10)
         self.timer = self.create_timer(1, self.timer_callback)
         self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
@@ -149,15 +150,22 @@ class PointCloudRegistration(Node):
             return
         self.get_logger().info(f"Received new target point cloud with {len(self.target.points)} points)")
         # 去除离群值
+        original_num_points = len(self.target.points)
         self.target, ind = self.target.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.5)
-        num_outliers = np.sum(np.logical_not(ind))
+        filtered_num_points = len(self.target.points)
+        num_outliers = original_num_points - filtered_num_points
         self.get_logger().info(f"Removed {num_outliers} outliers")
+        self.publish_point_cloud(self.pub_target, self.target)
 
         self.source = load_point_cloud(self.source_path)
         self.rvizpcd = load_point_cloud(self.valsource_path)
         # 对去除离群值后的点云进行插值
         num_interpolated_points = 400 # 你可以根据需要调整插值后的点数量
-        self.target = linear_interpolation(self.target, num_interpolated_points)       
+        if len(self.target.points) > 0:
+            self.target = linear_interpolation(self.target, num_interpolated_points)     
+        else:
+            self.get_logger().info("Target point cloud is empty after outlier removal, skipping interpolation")
+            return  
         # self.source = linear_interpolation(self.source, num_interpolated_points)
         # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
     ####################  pca粗配准 + icp精配准 ##########################################################
