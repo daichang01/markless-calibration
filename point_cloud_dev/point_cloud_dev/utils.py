@@ -7,13 +7,13 @@ from rclpy.node import Node
 from std_msgs.msg import Header
 from sensor_msgs.msg import PointCloud2, PointField
 import sensor_msgs_py.point_cloud2 as pc2
-from scipy.interpolate import interp1d, CubicSpline, griddata
+from scipy.interpolate import interp1d, splprep, splev
 
 ############################################## utils ##############################################
 def visualize_initial_point_clouds(pc1, pc2, window_name='untitle', width=1000, height=800):
     # Set colors for point clouds
-    pc1.paint_uniform_color([0, 1, 0])  # Green color for the second point cloud
-    # pc2.paint_uniform_color([0, 1, 0])  # 保留原始rgb
+    pc1.paint_uniform_color([1, 0, 0])  # red color for the first point cloud
+    pc2.paint_uniform_color([0, 1, 0])  # green
 
     # Create coordinate frames
     axis_pc = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.01)
@@ -131,43 +131,48 @@ def linear_interpolation(pcd, num_points):
     
     return interpolated_pcd
 
-def ensure_strictly_increasing(x):
-    """确保 x 是严格递增的，如果不是，则添加微小的随机扰动"""
-    for i in range(1, len(x)):
-        if x[i] <= x[i - 1]:
-            x[i] = x[i - 1] + np.random.uniform(1e-10, 1e-9)
-    return x
-def spline_interpolation(pcd, num_points):
-    points = np.asarray(pcd.points)
 
-    # 对点进行排序以确保 x 轴是递增的
+
+def spline_interpolation(pcd, num_points):
+    """
+    对点云进行样条插值
+
+    Args:
+        pcd (open3d.geometry.PointCloud): 输入点云
+        num_points (int): 插值后的点云包含的点的数量
+
+    Returns:
+        open3d.geometry.PointCloud: 插值后的点云
+    """
+    points = np.asarray(pcd.points)
+    
+    if len(points) < 2:
+        raise ValueError("点云中点的数量太少，无法进行插值")
+
+    # 去除重复点
+    points = np.unique(points, axis=0)
+    
+    # 确保点云按某个维度排序，例如按x坐标
     sorted_indices = np.argsort(points[:, 0])
     points = points[sorted_indices]
 
-    # 获取 x, y, z 轴的原始数据点
+    # 原始点的x坐标
     x_original = points[:, 0]
-    y_original = points[:, 1]
-    z_original = points[:, 2]
 
-    # 确保 x 轴是严格递增的
-    x_original = ensure_strictly_increasing(x_original)
-
-
-    # 生成新的 x 轴数据点，范围在原始数据点范围内
+    # 创建新的x坐标，均匀分布在原始x坐标范围内
     x_new = np.linspace(x_original.min(), x_original.max(), num_points)
 
-    # 使用 CubicSpline 进行插值
-    cs_y = CubicSpline(x_original, y_original)
-    cs_z = CubicSpline(x_original, z_original)
+    try:
+        # 对每个维度进行样条插值
+        tck, u = splprep([points[:, 0], points[:, 1], points[:, 2]], s=0)
+        new_points = splev(np.linspace(0, 1, num_points), tck)
+    except Exception as e:
+        raise ValueError(f"样条插值失败: {e}")
 
-    y_new = cs_y(x_new)
-    z_new = cs_z(x_new)
-
-    interpolated_points = np.stack((x_new, y_new, z_new), axis=-1)
+    interpolated_points = np.vstack(new_points).T
 
     # 创建新的点云
     interpolated_pcd = o3d.geometry.PointCloud()
     interpolated_pcd.points = o3d.utility.Vector3dVector(interpolated_points)
 
     return interpolated_pcd
-
