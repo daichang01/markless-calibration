@@ -4,8 +4,10 @@ import pyrealsense2 as rs
 pipeline = rs.pipeline()
 config = rs.config()
 # config.enable_device('你的设备ID')  # 如有必要
-config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
-config.enable_stream(rs.stream.color, 848, 480, rs.format.bgr8, 30)
+# config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
+# config.enable_stream(rs.stream.color, 848, 480, rs.format.bgr8, 30)
+config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
 
 # 启动管道并获取内参
 profile = pipeline.start(config)

@@ -32,6 +32,12 @@ class ImageSubscriber(Node):
         self.ts = message_filters.ApproximateTimeSynchronizer([self.color_sub, self.depth_sub], 10, 0.05)
         self.ts.registerCallback(self.callback)
 
+        # 相机内参
+        self.fx = 641.9315185546875
+        self.fy = 641.9315185546875
+        self.cx = 643.0005493164062
+        self.cy = 362.68548583984375
+
         self.latest_color_image = None
         self.latest_depth_image = None
         self.image_index = 0
@@ -168,8 +174,8 @@ class ImageSubscriber(Node):
                     if depth > 0:  # 简单的深度滤波，移除深度值为0的点
                         # 这里的内参需要根据实际相机调整
                         z = depth * 0.001  # scale depth to meters
-                        x = (u - 425.98785400390625) * z / 425.2796325683594
-                        y = (v - 241.7391357421875) * z / 425.2796325683594
+                        x = (u - self.cx) * z / self.fx
+                        y = (v - self.cy) * z / self.fy
                         b, g, r = self.latest_color_image[v, u].astype(np.uint8)
                         # print("BGR values:", b, g, r)  # 直接打印看是否有异常
                         rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
@@ -185,8 +191,8 @@ class ImageSubscriber(Node):
                     if depth > 0:  # 简单的深度滤波，移除深度值为0的点
                         # 这里的内参需要根据实际相机调整
                         z = depth * 0.001  # scale depth to meters
-                        x = (u - 425.98785400390625) * z / 425.2796325683594
-                        y = (v - 241.7391357421875) * z / 425.2796325683594
+                        x = (u - self.cx) * z / self.fx
+                        y = (v - self.cy) * z / self.fy
                         b, g, r = self.latest_color_image[v, u].astype(np.uint8)
                         # print("BGR values:", b, g, r)  # 直接打印看是否有异常
                         rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
