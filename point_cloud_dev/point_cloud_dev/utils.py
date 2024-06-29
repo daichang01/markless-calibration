@@ -176,3 +176,4 @@ def spline_interpolation(pcd, num_points):
     interpolated_pcd.points = o3d.utility.Vector3dVector(interpolated_points)
 
     return interpolated_pcd
+
