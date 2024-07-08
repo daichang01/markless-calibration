@@ -11,8 +11,13 @@ class PointCloudRegistration(Node):
         self.pub_trans = self.create_publisher(PointCloud2, '/trans_pcd_topic', 10)
         self.timer = self.create_timer(1, self.timer_callback)
         self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
-        self.source_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
+        # self.source_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/lowfront5pre.txt"
+        # self.source_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
+        self.source_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontonescan.txt"
+
+        # self.valsource_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
         self.valsource_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/pcavalue.txt"
+        
         self.rvizsource = load_point_cloud(self.valsource_path)
 
         # 创建配准对象
@@ -24,7 +29,7 @@ class PointCloudRegistration(Node):
         self.best_combination = None
         self.computed_combination = True
         self.kalman_filter = KalmanFilter(state_dim=16, measurement_dim=16)
-################################################ lowfront pipeline #############################################
+################################################ lowfront  registration pipeline #############################################
     def lowfront_callback(self, msg):
         self.target = pointcloud2_to_open3d(msg)
         if self.target is None or len(self.target.points) == 0:
@@ -42,15 +47,16 @@ class PointCloudRegistration(Node):
         self.source = load_point_cloud(self.source_path)
         self.rvizpcd = load_point_cloud(self.valsource_path)
         # 对去除离群值后的点云进行插值
-        num_interpolated_points = 400 # 可以根据需要调整插值后的点数量
-        if len(self.target.points) < num_interpolated_points:  # 确保需要增加点数时才进行插值
-            try:
-                self.target = spline_interpolation(self.target, num_interpolated_points)
-            except ValueError as e:
-                self.get_logger().info(f"Failed to perform spline interpolation: {e}")
-                return
-        else:
-            self.get_logger().info("No interpolation needed, point count exceeds required for interpolation.")
+        # num_interpolated_points = 400 # 可以根据需要
+        # if len(self.target.points) < num_interpolated_points:  # 确保需要增加点数时才进行插值
+        #     try:
+        #         self.target = spline_interpolation(self.target, num_interpolated_points)
+        #     except ValueError as e:
+        #         self.get_logger().info(f"Failed to perform spline interpolation: {e}")
+        #         return
+        # else:
+        #     self.get_logger().info("No interpolation needed, point count exceeds required for interpolation.")
+        # self.get_logger().info(f"after interpolation, point cloud with {len(self.source.points)} points)")
         # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
     ####################  pca粗配准  ##########################################################
         start_time_pca = time.time()
@@ -300,7 +306,7 @@ class PCARegistration:
             transformed_source_fpfh = self.compute_fpfh_feature(transformed_source_points)
             # 计算FPFH匹配的fitness
             fpfh_fitness = self.match_fpfh(transformed_source_points, target_points, transformed_source_fpfh, target_fpfh)
-            print(f"{i}:FPFH fitness: {fpfh_fitness}")
+            print(f"{i}:FPFH fitness: {fpfh_fitness}, signs: {signs}")
             i += 1
             # 如果当前的FPFH匹配fitness更好，则更新最佳结果
             if fpfh_fitness > best_fpfh_fitness:
@@ -337,7 +343,7 @@ class CurveICP:
             closest_tangents = target_tangents[indices]  # 找到最近的目标点的切线
 
             valid_pairs = self.filter_pairs_by_tangent(source_points, source_tangents, closest_points, closest_tangents)  # 过滤掉不满足角度约束的点对
-            # print(f"Iteration {i + 1}: Number of valid pairs = {len(valid_pairs)}")  # 打印有效点对的数量
+            print(f"Iteration {i + 1}: Number of valid pairs = {len(valid_pairs)}")  # 打印有效点对的数量
             if len(valid_pairs) == 0:
                 break  # 如果没有有效的点对，终止迭代
 

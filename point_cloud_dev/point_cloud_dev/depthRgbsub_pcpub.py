@@ -17,6 +17,7 @@ from ultralytics import YOLO
 from pathlib import Path
 from tf2_ros import StaticTransformBroadcaster
 from geometry_msgs.msg import TransformStamped
+from scipy.interpolate import splprep, splev
 
 
 class ImageSubscriber(Node):
@@ -29,7 +30,9 @@ class ImageSubscriber(Node):
         # self.lowteeth_publisher = self.create_publisher(PointCloud2, 'lowteeth_point_cloud', 10)
         self.roi_publisher = self.create_publisher(PointCloud2, 'roi_point_cloud', 10)
         self.processed_image_publisher = self.create_publisher(Image, 'processed_image', 10)
+        # 该同步器会在一个队列中存储最多 10 个消息，并且它会容忍消息时间戳之间最多相差 0.05 秒的偏差。
         self.ts = message_filters.ApproximateTimeSynchronizer([self.color_sub, self.depth_sub], 10, 0.05)
+        # 当同步器检测到两个消息源有符合时间同步条件的消息时，该函数被调用。
         self.ts.registerCallback(self.callback)
 
         # 相机内参
@@ -47,7 +50,7 @@ class ImageSubscriber(Node):
         # self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
-        self.model = YOLO("best.pt") #yolov8在本地训练的实例分割模型
+        self.model = YOLO("bestone.pt") #yolov8在本地训练的实例分割模型
         
     def save_images(self):
         if self.latest_color_image is not None and self.latest_depth_image is not None:
@@ -82,7 +85,9 @@ class ImageSubscriber(Node):
     def callback(self, color_msg, depth_msg):
         # print(f"Received color image of shape: {color_msg.height}x{color_msg.width}")
         # print(f"Received depth image of shape: {depth_msg.height}x{depth_msg.width}")
+            # 将彩色图像消息转换为 OpenCV 格式的图像，颜色格式为 BGR
         self.latest_color_image = self.bridge.imgmsg_to_cv2(color_msg, "bgr8")
+        # 将深度图像消息转换为 OpenCV 格式的图像，数据保持原样（passthrough）
         self.latest_depth_image = self.bridge.imgmsg_to_cv2(depth_msg, "passthrough")
 
 ######### 显示接收到的rgb和depth图像 ##################################
@@ -95,10 +100,13 @@ class ImageSubscriber(Node):
         # if cv2.waitKey(10) & 0xFF == ord('q'):
         #     cv2.destroyAllWindows()
 ############################################################### yolo检测demo ################3#########################################
+        # 使用模型对最新的彩色图像进行预测，得到检测结果
         yolo_results = self.model.predict(self.latest_color_image)
+        # 如果不想进行预测，可以将结果设为 None
         # yolo_results = None
         if yolo_results:
             for res in yolo_results:
+                # 对每一个结果进行进一步处理
                 self.process_oneres(res)
                     
         else:
@@ -136,13 +144,14 @@ class ImageSubscriber(Node):
             # cv2.waitKey(5)
 
             ############################################## 牙齿轮廓提取 #####################################################
-            contours, large_contours = self.edge_extration(x1, y1, x2, y2, b_mask, iso_crop)
+            contours, large_contours, interpolated_contours = self.edge_extration(x1, y1, x2, y2, b_mask, iso_crop)
             
             # 选择面积最大的轮廓绘制
             if contours:
                 # 根据面积排序轮廓
                 contours = sorted(contours, key=cv2.contourArea, reverse=True)
-                contours = contours[:len(large_contours)] # 选择前 n个 根据实际情况调整
+                # contours = contours[:len(large_contours)] # 选择前 n个 根据实际情况调整
+                contours = contours[:2] # 选择前 n个 根据实际情况调整
                 #绘制前n个最大轮廓
                 mask = np.zeros_like(iso_crop)
                 cv2.drawContours(mask, contours, -1, (0, 255, 0), 1)
@@ -166,7 +175,7 @@ class ImageSubscriber(Node):
             # for v in range(start_y, end_y):
             #     for u in range(start_x, end_x):
             #         depth = cv_depth_image[v, u]
-            for contour in contours:
+            for contour in large_contours:
                 for point in contour:
                     u = point[0][0] + start_x
                     v = point[0][1] + start_y
@@ -202,40 +211,84 @@ class ImageSubscriber(Node):
                         
             
             self.create_pointcloud2_msg(points_roi, val_idx)
-    def edge_extration(self, x1, y1, x2, y2,  b_mask, iso_crop):
+    def edge_extration(self, x1, y1, x2, y2, b_mask, iso_crop):
         ############################################## 牙齿轮廓提取 #####################################################
-        #转换为灰度图
+        # 转换为灰度图
         gray_image = cv2.cvtColor(iso_crop, cv2.COLOR_BGR2GRAY)
-        # 应用高斯模糊
+        # 应用高斯模糊，用于降低图像噪声
         gray_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
         # 腐蚀操作
         kernel = np.ones((3,3), np.uint8)
         gray_image = cv2.erode(gray_image, kernel, iterations=1)
-        # 使用 Otsu 的方法自动确定阈值
+        # 使用 Otsu 的方法自动确定二值化阈值
         otsu_thresh, binary_image = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        threshold1 = 0.5 * otsu_thresh
-        threshold2 = otsu_thresh
-        print(threshold1, threshold2)
+        threshold1 = 0.5 * otsu_thresh  # 计算 Canny 边缘检测的低阈值
+        threshold2 = otsu_thresh        # 计算 Canny 边缘检测的高阈值
+        print(f"low threshold: {threshold1}, high threshold: {threshold2}")   # 打印阈值，用于调试
 
         # 应用 Canny 边缘检测
         edges = cv2.Canny(gray_image, threshold1, threshold2)
-        cropped_mask = b_mask[y1:y2, x1:x2]
-        erode_mask = cv2.erode(cropped_mask, kernel, iterations=2)
-        edges = cv2.bitwise_and(edges, edges, mask=erode_mask)
+        cropped_mask = b_mask[y1:y2, x1:x2]  # 从黑色掩码中裁剪与感兴趣区域相对应的部分
+        erode_mask = cv2.erode(cropped_mask, kernel, iterations=2)  # 对裁剪的掩码进行进一步腐蚀
+        edges = cv2.bitwise_and(edges, edges, mask=erode_mask)  # 使用掩码过滤边缘，保留主要部分
+
         # 查找边缘的轮廓，只检索最外层轮廓
-        # contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        # 过滤轮廓
-        min_area = 10  # 设置最小面积阈值
+        # 过滤轮廓，只保留面积大于设定阈值的轮廓
+        min_area = 3  # 设置最小面积阈值
         large_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
-        print(f"Number of main contours: {len(large_contours)}")  # 打印主要轮廓的数量
-        # 打印每个轮廓中点的数量
+        print(f"Number of main contours: {len(large_contours)}")  # 打印过滤后的主要轮廓数量
+
+        interpolated_contours = []
+        # 打印每个主要轮廓中点的数量
         for i, contour in enumerate(large_contours):
-            num_points = len(contour)  # 获取轮廓中点的数量
+            num_points = len(contour)
+            # 轮廓插值
+            # interpolated_contour = self.interpolate_contour(contour)
+            # num_points = len(interpolated_contour)  # 获取轮廓中点的数量
+            # interpolated_contours.append(interpolated_contour.reshape(-1, 1, 2)) #保证了每个轮廓都是由形状为 (n, 1, 2) 的数组组成，其中 n 是点的数量，符合 OpenCV 轮廓处理函数的要求
             print(f"Contour {i} has {num_points} points:")
             
-        return contours, large_contours
+        return contours, large_contours, interpolated_contours  # 返回所有轮廓和过滤后的主要轮廓
     
+    def interpolate_contour(self, contour, num_points=400):
+        # 将轮廓转换为 numpy 数组并确保其形状正确
+        contour = np.array(contour, dtype=np.float32).squeeze()
+        if contour.ndim == 1:
+            contour = contour.reshape(-1, 2)  # 保证轮廓是二维的
+
+        # 闭合轮廓，确保开始点和结束点相同
+        if not np.all(contour[0] == contour[-1]):
+            contour = np.vstack([contour, contour[0]])
+
+        # 参数化轮廓，准备样条插值
+        tck, u = splprep(contour.T, s=0, per=True)  # 参数 s 控制平滑度，per=True 确保是周期函数（闭合轮廓）
+
+        # 生成均匀分布的新参数值
+        unew = np.linspace(0, 1, num_points)
+
+        # 使用生成的参数值进行样条插值
+        out = splev(unew, tck)
+
+        # 将输出转换为正确的形状
+        interpolated_contour = np.column_stack(out).astype(np.int32)
+        return interpolated_contour
+
+    def interpolate_contour_uniform(self, contour, num_points=400):
+        # 创建一个用于插值的空列表
+        interpolated_contour = []
+        # 将轮廓转换为numpy数组
+        contour = np.array(contour).squeeze()
+        # 获取轮廓上的点数
+        contour_length = contour.shape[0]
+        # 计算等间隔的插值点
+        for i in range(contour_length):
+            start_point = contour[i]
+            end_point = contour[(i+1) % contour_length]  # 确保轮廓闭合
+            for t in np.linspace(0, 1, num_points // contour_length):
+                interpolated_point = (1 - t) * start_point + t * end_point
+                interpolated_contour.append(interpolated_point)
+        return np.array(interpolated_contour, dtype=np.int32)
     def publish_processed_image(self, image):
         image_msg = self.bridge.cv2_to_imgmsg(image, encoding="bgr8")
         self.processed_image_publisher.publish(image_msg)
