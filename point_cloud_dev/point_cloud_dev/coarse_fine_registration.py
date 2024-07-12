@@ -11,12 +11,12 @@ class PointCloudRegistration(Node):
         self.pub_trans = self.create_publisher(PointCloud2, '/trans_pcd_topic', 10)
         self.timer = self.create_timer(1, self.timer_callback)
         self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
-        # self.source_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/lowfront5pre.txt"
-        # self.source_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
-        self.source_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontonescan.txt"
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfront5pre.txt"
+        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontonescan.txt"
 
-        # self.valsource_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
-        self.valsource_path = "/home/daichang/Desktop/ros2_ws/src/markless-calibration/pcd/wait-to-reg/pcavalue.txt"
+        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/pcavalue.txt"
         
         self.rvizsource = load_point_cloud(self.valsource_path)
 

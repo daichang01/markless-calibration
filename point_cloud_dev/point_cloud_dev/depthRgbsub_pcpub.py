@@ -11,7 +11,6 @@ from std_msgs.msg import Header
 from sensor_msgs.msg import PointField
 import struct
 import os
-import torch
 from datetime import datetime
 from ultralytics import YOLO
 from pathlib import Path
@@ -50,7 +49,7 @@ class ImageSubscriber(Node):
         # self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
-        self.model = YOLO("bestone.pt") #yolov8在本地训练的实例分割模型
+        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best.pt") #yolov8在本地训练的实例分割模型
         
     def save_images(self):
         if self.latest_color_image is not None and self.latest_depth_image is not None:
