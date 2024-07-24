@@ -15,8 +15,8 @@ class PointCloudRegistration(Node):
         self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
         # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontonescan.txt"
 
-        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
-        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/pcavalue.txt"
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
+        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/pcavalue.txt"
         
         self.rvizsource = load_point_cloud(self.valsource_path)
 
