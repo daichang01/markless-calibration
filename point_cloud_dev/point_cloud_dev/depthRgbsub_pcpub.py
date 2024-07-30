@@ -25,8 +25,9 @@ class ImageSubscriber(Node):
         self.bridge = CvBridge()
         self.color_sub = message_filters.Subscriber(self, Image, '/camera/camera/color/image_rect_raw')
         self.depth_sub = message_filters.Subscriber(self, Image, '/camera/camera/aligned_depth_to_color/image_raw')
-        self.lowfront_publisher = self.create_publisher(PointCloud2, 'lowfront_point_cloud', 10)
-        # self.lowteeth_publisher = self.create_publisher(PointCloud2, 'lowteeth_point_cloud', 10)
+        self.lowon_publisher = self.create_publisher(PointCloud2, 'lowfront_point_cloud', 10)
+        self.lowoff_publisher = self.create_publisher(PointCloud2, 'lowoff_point_cloud', 10)
+        self.combined_publisher = self.create_publisher(PointCloud2, 'combined_point_cloud', 10)  
         self.roi_publisher = self.create_publisher(PointCloud2, 'roi_point_cloud', 10)
         self.processed_image_publisher = self.create_publisher(Image, 'processed_image', 10)
         # 该同步器会在一个队列中存储最多 10 个消息，并且它会容忍消息时间戳之间最多相差 0.05 秒的偏差。
@@ -45,11 +46,13 @@ class ImageSubscriber(Node):
         self.image_index = 0
         self.image_folder = "src/markless-calibration/image"  # 路径需要根据你的文件系统进行修改
 
+        self.points_combined = []  # 存储合并后的点云
+
 ##################  采集RGB和深度图并保存,用于yolo训练  ####################################################################
         # self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
-        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best.pt") #yolov8在本地训练的实例分割模型
+        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0729.pt") #yolov8在本地训练的实例分割模型
         
     def save_images(self):
         if self.latest_color_image is not None and self.latest_depth_image is not None:
@@ -82,8 +85,6 @@ class ImageSubscriber(Node):
         return image
 
     def callback(self, color_msg, depth_msg):
-        # print(f"Received color image of shape: {color_msg.height}x{color_msg.width}")
-        # print(f"Received depth image of shape: {depth_msg.height}x{depth_msg.width}")
             # 将彩色图像消息转换为 OpenCV 格式的图像，颜色格式为 BGR
         self.latest_color_image = self.bridge.imgmsg_to_cv2(color_msg, "bgr8")
         # 将深度图像消息转换为 OpenCV 格式的图像，数据保持原样（passthrough）
@@ -96,8 +97,8 @@ class ImageSubscriber(Node):
         # 显示处理后的RGB和深度图像
         # cv2.imshow("Color Image",  self.latest_color_image)
         # cv2.imshow("Depth Image", cv_depth_normalized)
-        # if cv2.waitKey(10) & 0xFF == ord('q'):
-        #     cv2.destroyAllWindows()
+        if cv2.waitKey(10) & 0xFF == ord('q'):
+            cv2.destroyAllWindows()
 ############################################################### yolo检测demo ################3#########################################
         # 使用模型对最新的彩色图像进行预测，得到检测结果
         yolo_results = self.model.predict(self.latest_color_image)
@@ -107,6 +108,8 @@ class ImageSubscriber(Node):
             for res in yolo_results:
                 # 对每一个结果进行进一步处理
                 self.process_oneres(res)
+            self.publish_combined_pointcloud()  # 发布合并后的点云
+            self.points_combined = []  # 清空合并点云数据
                     
         else:
             print("No objects detected")
@@ -150,7 +153,7 @@ class ImageSubscriber(Node):
                 # 根据面积排序轮廓
                 contours = sorted(contours, key=cv2.contourArea, reverse=True)
                 # contours = contours[:len(large_contours)] # 选择前 n个 根据实际情况调整
-                contours = contours[:2] # 选择前 n个 根据实际情况调整
+                contours = contours[:4] # 选择前 n个 根据实际情况调整
                 #绘制前n个最大轮廓
                 mask = np.zeros_like(iso_crop)
                 cv2.drawContours(mask, contours, -1, (0, 255, 0), 1)
@@ -161,7 +164,7 @@ class ImageSubscriber(Node):
                 # cv2.imshow(f"{cls_idx}_{label}mask", mask)
                 # cv2.imshow(f"{cls_idx}_{label} Overlaid", overlaid_image)
                 # cv2.waitKey(5)
-                self.publish_processed_image(overlaid_image)
+                # self.publish_processed_image(overlaid_image)
 
             ###############################  深度图边缘转点云 ##################################################
             start_x, end_x = x1, x2
@@ -189,6 +192,8 @@ class ImageSubscriber(Node):
                         rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
                         rgb = struct.unpack('I', rgb)[0]
                         points_edge.append([x, y, z, rgb])
+                        self.points_combined.append([x, y, z, rgb])  # 添加到合并的点云
+
             
             self.create_pointcloud2_msg(points_edge, cls_idx)
             
@@ -210,6 +215,7 @@ class ImageSubscriber(Node):
                         
             
             self.create_pointcloud2_msg(points_roi, val_idx)
+
     def edge_extration(self, x1, y1, x2, y2, b_mask, iso_crop):
         ############################################## 牙齿轮廓提取 #####################################################
         # 转换为灰度图
@@ -226,7 +232,7 @@ class ImageSubscriber(Node):
         print(f"low threshold: {threshold1}, high threshold: {threshold2}")   # 打印阈值，用于调试
 
         # 应用 Canny 边缘检测
-        edges = cv2.Canny(gray_image, threshold1, threshold2)
+        edges = cv2.Canny(gray_image, threshold1 = 20, threshold2 = 90)
         cropped_mask = b_mask[y1:y2, x1:x2]  # 从黑色掩码中裁剪与感兴趣区域相对应的部分
         erode_mask = cv2.erode(cropped_mask, kernel, iterations=2)  # 对裁剪的掩码进行进一步腐蚀
         edges = cv2.bitwise_and(edges, edges, mask=erode_mask)  # 使用掩码过滤边缘，保留主要部分
@@ -292,6 +298,17 @@ class ImageSubscriber(Node):
         image_msg = self.bridge.cv2_to_imgmsg(image, encoding="bgr8")
         self.processed_image_publisher.publish(image_msg)
 
+    
+    def publish_combined_pointcloud(self):
+        header = Header(frame_id='camera_infra1_optical_frame', stamp=self.get_clock().now().to_msg())
+        fields = [PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+                  PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+                  PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+                  PointField(name='rgb', offset=12, datatype=PointField.UINT32, count=1)]
+        point_cloud_msg = pc2.create_cloud(header, fields, self.points_combined)
+        self.combined_publisher.publish(point_cloud_msg)
+        print("Combined Point Cloud published")
+
     def create_pointcloud2_msg(self, points, idx):
         header = Header(frame_id='camera_infra1_optical_frame', stamp=self.get_clock().now().to_msg())
         fields = [PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
@@ -300,12 +317,11 @@ class ImageSubscriber(Node):
                 PointField(name='rgb', offset=12, datatype=PointField.UINT32, count=1)]
         point_cloud_msg = pc2.create_cloud(header, fields, points)
         if(idx == 0):
-            self.lowfront_publisher.publish(point_cloud_msg)
-            print("lowfront Point Cloud published")
+            self.lowon_publisher.publish(point_cloud_msg)
+            print("lowon Cloud published")
         elif(idx == 1):
-            # self.lowteeth_publisher.publish(point_cloud_msg)
-            # print("lowteeth Point Cloud published")
-            pass
+            self.lowoff_publisher.publish(point_cloud_msg)
+            print("lowoff Cloud published")
         elif(idx == 7):
             self.roi_publisher.publish(point_cloud_msg)
             print("roi Point Cloud published")
