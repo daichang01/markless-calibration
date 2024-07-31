@@ -10,14 +10,20 @@ class PointCloudRegistration(Node):
         self.pub_target = self.create_publisher(PointCloud2, '/target_pcd_topic', 10)
         self.pub_trans = self.create_publisher(PointCloud2, '/trans_pcd_topic', 10)
         self.timer = self.create_timer(1, self.timer_callback)
-        self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
-        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfront5pre.txt"
-        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
-        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontonescan.txt"
-
-        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
-        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/pcavalue.txt"
+        # self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
+        self.combined_sub = self.create_subscription(PointCloud2, '/combined_point_cloud', self.lowfront_callback, 10)
         
+        # 待配准边缘
+
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/sample_all_in.txt"
+        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/godshot.txt"
+        # 口扫点云验证
+        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/pcavalue.txt"
+        
+  
+
         self.rvizsource = load_point_cloud(self.valsource_path)
 
         # 创建配准对象
@@ -57,6 +63,8 @@ class PointCloudRegistration(Node):
         # else:
         #     self.get_logger().info("No interpolation needed, point count exceeds required for interpolation.")
         # self.get_logger().info(f"after interpolation, point cloud with {len(self.source.points)} points)")
+        
+        # 可视化预处理后的点云
         # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
     ####################  pca粗配准  ##########################################################
         start_time_pca = time.time()
@@ -498,7 +506,6 @@ def main(args=None):
     
 if __name__ == "__main__":
     main()
-
 
 
 

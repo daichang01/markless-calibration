@@ -1,208 +1,507 @@
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
-import cv2
-import message_filters
-import numpy as np
-from sensor_msgs.msg import PointCloud2
-import sensor_msgs_py.point_cloud2 as pc2
-from std_msgs.msg import Header
-from sensor_msgs.msg import PointField
-import struct
-import os
-from datetime import datetime
-from ultralytics import YOLO
-from pathlib import Path
-from tf2_ros import StaticTransformBroadcaster
-from geometry_msgs.msg import TransformStamped
-from scipy.interpolate import splprep, splev
+from .utils import *
+from scipy.spatial import cKDTree
 
 
-class ImageSubscriber(Node):
-    def __init__(self):
-        super().__init__('image_subscriber')
-        self.bridge = CvBridge()
-        self.color_sub = message_filters.Subscriber(self, Image, '/camera/camera/color/image_rect_raw')
-        self.depth_sub = message_filters.Subscriber(self, Image, '/camera/camera/aligned_depth_to_color/image_raw')
-        self.lowon_publisher = self.create_publisher(PointCloud2, 'lowfront_point_cloud', 10)
-        self.lowoff_publisher = self.create_publisher(PointCloud2, 'lowoff_point_cloud', 10)
-        self.roi_publisher = self.create_publisher(PointCloud2, 'roi_point_cloud', 10)
-        self.processed_image_publisher = self.create_publisher(Image, 'processed_image', 10)
-        self.combined_publisher = self.create_publisher(PointCloud2, 'combined_point_cloud', 10)  # 新增的发布器
-        self.ts = message_filters.ApproximateTimeSynchronizer([self.color_sub, self.depth_sub], 10, 0.05)
-        self.ts.registerCallback(self.callback)
+class PointCloudRegistration(Node):
+    def __init__(self, threshold=0.001):
+        super().__init__('transform_pcd_publisher')
+        self.threshold = threshold
+        self.pub_ori = self.create_publisher(PointCloud2, '/ori_pcd_topic', 10)
+        self.pub_target = self.create_publisher(PointCloud2, '/target_pcd_topic', 10)
+        self.pub_trans = self.create_publisher(PointCloud2, '/trans_pcd_topic', 10)
+        self.timer = self.create_timer(1, self.timer_callback)
+        # self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
+        self.combined_sub = self.create_subscription(PointCloud2, '/combined_point_cloud', self.lowfront_callback, 10)
 
-        # 相机内参
-        self.fx = 641.9315185546875
-        self.fy = 641.9315185546875
-        self.cx = 643.0005493164062
-        self.cy = 362.68548583984375
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
 
-        self.latest_color_image = None
-        self.latest_depth_image = None
-        self.image_index = 0
-        self.image_folder = "src/markless-calibration/image"  # 路径需要根据你的文件系统进行修改
+        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/godshot.txt"
 
-        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0729.pt") #yolov8在本地训练的实例分割模型
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
+        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/pcavalue.txt"
+        
+        self.rvizsource = load_point_cloud(self.valsource_path)
 
-        self.points_combined = []  # 存储合并后的点云
+        # 创建配准对象
+        self.pca_registrator = PCARegistration()
+        # self.fpfh_registrator = FPFHRegistration()
+        self.icp_registrator = ICPRegistration()
+        self.curve_icp_registrator = CurveICP()  
 
-    def callback(self, color_msg, depth_msg):
-        self.latest_color_image = self.bridge.imgmsg_to_cv2(color_msg, "bgr8")
-        self.latest_depth_image = self.bridge.imgmsg_to_cv2(depth_msg, "passthrough")
+        self.best_combination = None
+        self.computed_combination = True
+        self.kalman_filter = KalmanFilter(state_dim=16, measurement_dim=16)
+################################################ lowfront  registration pipeline #############################################
+    def lowfront_callback(self, msg):
+        self.target = pointcloud2_to_open3d(msg)
+        if self.target is None or len(self.target.points) == 0:
+            self.get_logger().info("Received empty target point cloud, skipping registration")
+            return
+        self.get_logger().info(f"Received new target point cloud with {len(self.target.points)} points)")
+        # 去除离群值
+        original_num_points = len(self.target.points)
+        self.target, ind = self.target.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.5)
+        filtered_num_points = len(self.target.points)
+        num_outliers = original_num_points - filtered_num_points
+        self.get_logger().info(f"Removed {num_outliers} outliers")
+        self.publish_point_cloud(self.pub_target, self.target)
 
-        cv_depth_normalized = cv2.normalize(self.latest_depth_image, None, 0, 255, cv2.NORM_MINMAX)
-        cv_depth_normalized = np.uint8(cv_depth_normalized)
+        self.source = load_point_cloud(self.source_path)
+        self.rvizpcd = load_point_cloud(self.valsource_path)
+        # 对去除离群值后的点云进行插值
+        # num_interpolated_points = 400 # 可以根据需要
+        # if len(self.target.points) < num_interpolated_points:  # 确保需要增加点数时才进行插值
+        #     try:
+        #         self.target = spline_interpolation(self.target, num_interpolated_points)
+        #     except ValueError as e:
+        #         self.get_logger().info(f"Failed to perform spline interpolation: {e}")
+        #         return
+        # else:
+        #     self.get_logger().info("No interpolation needed, point count exceeds required for interpolation.")
+        # self.get_logger().info(f"after interpolation, point cloud with {len(self.source.points)} points)")
+        # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
+    ####################  pca粗配准  ##########################################################
+        start_time_pca = time.time()
+        # 带调整主轴方向的pca
+        coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = self.pca_registrator.pca_adjust_calibration(self.source, self.target)
+        # 不带主轴方向调整的pca
+        # coarse_transformation, transformed_source_cloud = self.pca_registrator.pca_calibration(self.source, self.target)
+        end_time_pca = time.time()
 
-        cv2.imshow("Color Image",  self.latest_color_image)
-        if cv2.waitKey(10) & 0xFF == ord('q'):
-            cv2.destroyAllWindows()
+        pca_time = end_time_pca - start_time_pca
+        print("PCA粗配准后的变换矩阵：")
+        print(f"{coarse_transformation}")
+        print("PCA粗配准后的评估结果：")
+        # print(f"Best Axis Flip Combination: {best_frequent_combination}")
+        print(f"pca粗配准共计耗时: {pca_time} 秒")
 
-        yolo_results = self.model.predict(self.latest_color_image)
-        if yolo_results:
-            for res in yolo_results:
-                self.process_oneres(res)
-            self.publish_combined_pointcloud()  # 发布合并后的点云
-            self.points_combined = []  # 清空合并点云数据
-        else:
-            print("No objects detected")
+        ####################  曲线ICP精配准  ##########################################################
 
-    def process_oneres(self, r):
-        img = np.copy(r.orig_img)
-        img_name = Path(r.path).stem
+        start_time_icp = time.time()
+        fine_transformation, fitness, inlier_rmse, num_valid_pairs = self.curve_icp_registrator.icp_fine_registration \
+            (transformed_source_cloud, self.target)
+        end_time_icp = time.time()
+        icp_time = end_time_icp - start_time_icp
+        print("曲线ICP精配准后的变换矩阵：")
+        print(f"{fine_transformation}")
+        print("曲线ICP精配准后的评估结果：")
+        print(f"RMSE: {inlier_rmse}")
+        print(f"Fitness: {fitness}")
+        print(f"曲线ICP精配准耗时: {icp_time} 秒")
 
-        for ci, c in enumerate(r):
-            cls_idx = int(c.boxes.cls[0])
-            label = c.names[cls_idx]
+    ####################  icp精配准  ##########################################################
 
-            b_mask = np.zeros(img.shape[:2], np.uint8)
-            contour = c.masks.xy.pop()
-            contour = contour.astype(np.int32)
-            contour = contour.reshape(-1, 1, 2)
-            _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
-            mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
-            isolated = cv2.bitwise_and(mask3ch, img)
-            x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+        # start_time_icp = time.time()
+        # fine_transformation, fitness, inlier_rmse = self.icp_registrator.icp_fine_registration \
+        #     (transformed_source_cloud, self.target, self.threshold)
+        # end_time_icp = time.time()
+        # icp_time = end_time_icp - start_time_icp
+        # print("精配准后的变换矩阵：")
+        # print(f"{fine_transformation}")
+        # print("精配准后的评估结果：")
+        # print(f"RMSE: {inlier_rmse}")
+        # print(f"Fitness: {fitness}")
+        # print(f"icp精配准耗时: {icp_time} 秒")
+#################### ransac粗配准  + icp精配准 #######################################################
+        # coarse_transformation, transformed_source_cloud = self.fpfh_registrator.fpfh_ransac_coarse_registration(self.source, self.target,self.threshold)
+        # fine_transformation = self.icp_registrator.icp_fine_registration(transformed_source_cloud, self.target ,self.threshold) 
+        # combined_transformation = np.dot(fine_transformation, coarse_transformation)
+    #############粗配准 + 精配准  ##########################################################    
+        combined_transformation = np.dot(fine_transformation, coarse_transformation) 
+        print(f"总变换矩阵:{combined_transformation}")
 
-            cv2.namedWindow(f"{cls_idx}_{label}", cv2.WINDOW_NORMAL)
-            cv2.imshow(f"{cls_idx}_{label}", isolated[y1:y2, x1:x2])
-            cv2.waitKey(5)
+        # 使用卡尔曼滤波进行平滑
+        combined_transformation_flat = combined_transformation.flatten()
+        self.kalman_filter.update(combined_transformation_flat)
+        smoothed_transformation_flat = self.kalman_filter.get_state().reshape((4, 4))
 
-            contours, large_contours, interpolated_contours = self.edge_extration(x1, y1, x2, y2, b_mask, isolated[y1:y2, x1:x2])
-            if contours:
-                contours = sorted(contours, key=cv2.contourArea, reverse=True)
-                contours = contours[:4]
-                mask = np.zeros_like(isolated[y1:y2, x1:x2])
-                cv2.drawContours(mask, contours, -1, (0, 255, 0), 1)
-                overlaid_image = cv2.addWeighted(isolated[y1:y2, x1:x2], 0.7, mask, 0.3, 0)
-                cv2.namedWindow(f"{cls_idx}_{label} Overlaid", cv2.WINDOW_NORMAL)
-                cv2.imshow(f"{cls_idx}_{label} Overlaid", overlaid_image)
-                cv2.waitKey(5)
+        # self.rvizpcd.transform(smoothed_transformation_flat) #粗配准 + 精配准 + 卡尔曼滤波
+        self.rvizpcd.transform(combined_transformation) #粗配准 + 精配准
+        # self.rvizpcd.transform(coarse_transformation) # 只进行粗配准
+        self.publish_point_cloud(self.pub_trans, self.rvizpcd)
+        print("publish trans scan point cloud !")
+        
+    def timer_callback(self):
+        self.publish_point_cloud(self.pub_ori, self.rvizsource)
+        # self.publish_point_cloud(self.pub_trans, self.rvizpcd)
+        print("publish ori scan point cloud !")
 
-            start_x, end_x = x1, x2
-            start_y, end_y = y1, y2
+    def publish_point_cloud(self, pub, point_cloud):
+        pc2_msg = convert_to_pointcloud2(point_cloud)
+        pub.publish(pc2_msg)
 
-            points_edge = []
-            points_roi = []
+    
 
-            for contour in large_contours:
-                for point in contour:
-                    u = point[0][0] + start_x
-                    v = point[0][1] + start_y
-                    depth = self.latest_depth_image[v, u]
-                    if depth > 0:
-                        z = depth * 0.001
-                        x = (u - self.cx) * z / self.fx
-                        y = (v - self.cy) * z / self.fy
-                        b, g, r = self.latest_color_image[v, u].astype(np.uint8)
-                        rgb = struct.pack('BBBB', b, g, r, 255)
-                        rgb = struct.unpack('I', rgb)[0]
-                        points_edge.append([x, y, z, rgb])
-                        self.points_combined.append([x, y, z, rgb])  # 添加到合并的点云
+class PCARegistration:
+    def compute_pca(self, points):
+        # 计算点集的中心点。这里使用np.mean计算所有点的平均值，axis=0确保按列求平均（即对每个维度求平均）。
+        centroid = np.mean(points, axis=0)
+        
+        # 中心化点云：将每个点的坐标减去中心点的坐标，使得新的点云集中在原点附近。
+        centered_points = points - centroid
+        
+        # 计算中心化后点云的协方差矩阵。np.cov用于计算协方差矩阵，参数.T表示转置，因为np.cov默认是按行处理的。
+        cov_matrix = np.cov(centered_points.T)
+        
+        # 使用np.linalg.eigh计算协方差矩阵的特征值和特征向量。eigh是专为对称或厄米特矩阵设计的，更稳定。
+        eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix)
+        
+        # 对特征值进行降序排序，获取排序后的索引。np.argsort对特征值数组进行排序，默认升序，[::-1]实现降序。
+        idx = np.argsort(eigenvalues)[::-1]
+        
+        # 重排特征向量，使其与特征值的降序对应。这确保了第一个特征向量对应最大的特征值。
+        eigenvectors = eigenvectors[:, idx]
+        
+        # 返回排序后的特征向量和中心点。特征向量的每一列都是一个主成分方向。
+        return eigenvectors, centroid
 
-            self.create_pointcloud2_msg(points_edge, cls_idx)
 
-            for v in range(start_y, end_y):
-                for u in range(start_x, end_x):
-                    depth = self.latest_depth_image[v, u]
-                    if depth > 0:
-                        z = depth * 0.001
-                        x = (u - self.cx) * z / self.fx
-                        y = (v - self.cy) * z / self.fy
-                        b, g, r = self.latest_color_image[v, u].astype(np.uint8)
-                        rgb = struct.pack('BBBB', b, g, r, 255)
-                        rgb = struct.unpack('I', rgb)[0]
-                        points_roi.append([x, y, z, rgb])
-            val_idx = 7
-            self.create_pointcloud2_msg(points_roi, val_idx)
+    def transform_points(self, points, R, t):
+        transformed_points = np.dot(points, R.T) + t
+        return transformed_points
 
-    def publish_combined_pointcloud(self):
-        header = Header(frame_id='camera_infra1_optical_frame', stamp=self.get_clock().now().to_msg())
-        fields = [PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-                  PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-                  PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-                  PointField(name='rgb', offset=12, datatype=PointField.UINT32, count=1)]
-        point_cloud_msg = pc2.create_cloud(header, fields, self.points_combined)
-        self.combined_publisher.publish(point_cloud_msg)
-        print("Combined Point Cloud published")
+    def calculate_mse(self, source_points, target_points):
+        # 创建目标点云的KD树
+        tree = cKDTree(target_points)
+        # 查询源点云中每个点在目标点云中的最近邻点
+        distances, indices = tree.query(source_points, k=1)
+        # 找到每个源点云点对应的最近的目标点云点
+        nearest_target_points = target_points[indices]
+        # 计算源点云和最近的目标点云点之间的均方误差 (MSE)
+        return np.mean((source_points - nearest_target_points)**2)
 
-    def edge_extration(self, x1, y1, x2, y2, b_mask, iso_crop):
-        gray_image = cv2.cvtColor(iso_crop, cv2.COLOR_BGR2GRAY)
-        gray_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
-        kernel = np.ones((3,3), np.uint8)
-        gray_image = cv2.erode(gray_image, kernel, iterations=1)
-        otsu_thresh, binary_image = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        threshold1 = 0.5 * otsu_thresh
-        threshold2 = otsu_thresh
-        print(f"low threshold: {threshold1}, high threshold: {threshold2}")
+    def calculate_overlap_ratio(self, source_points, target_points, threshold=0.001):
+        # 创建目标点云的KD树
+        tree = cKDTree(target_points)
+        # 查询源点云中每个点在目标点云中的最近邻点的距离
+        distances, _ = tree.query(source_points, k=1)
+        # 计算源点云中距离目标点云最近点距离小于阈值的点的数量
+        overlap_count = np.sum(distances < threshold)
+        # 计算重叠率，即重叠点的数量除以源点云的总点数
+        return overlap_count / len(source_points)
 
-        edges = cv2.Canny(gray_image, threshold1 = 20, threshold2 = 90)
-        cropped_mask = b_mask[y1:y2, x1:x2]
-        erode_mask = cv2.erode(cropped_mask, kernel, iterations=2)
-        edges = cv2.bitwise_and(edges, edges, mask=erode_mask)
+    def compute_fpfh_feature(self, points):
+        # 创建一个Open3D点云对象
+        pcd = o3d.geometry.PointCloud()
+        
+        # 将输入的点坐标转换为Open3D的点云格式
+        pcd.points = o3d.utility.Vector3dVector(points)
+        
+        # 估计点云的法线
+        # 参数search_param用于指定KD树搜索的参数
+        # radius: 搜索半径，单位为米。这里设置为0.003米。
+        # max_nn: 搜索的最大邻居数。这里设置为30。
+        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.003, max_nn=30))
+        
+        # 计算FPFH特征
+        # 参数search_param用于指定KD树搜索的参数
+        # radius: 搜索半径，单位为米。这里设置为0.005米。
+        # max_nn: 搜索的最大邻居数。这里设置为50。
+        fpfh = o3d.pipelines.registration.compute_fpfh_feature(
+            pcd,
+            o3d.geometry.KDTreeSearchParamHybrid(radius=0.005, max_nn=50)
+        )
+        
+        # 返回计算得到的FPFH特征
+        return fpfh
+    
+    def match_fpfh(self, source_points, target_points,source_fpfh, target_fpfh):
+        # 创建一个Open3D点云对象，用于存储源点云
+        source_pcd = o3d.geometry.PointCloud()
+        target_pcd = o3d.geometry.PointCloud()
+        
+        # 将源和目标FPFH特征的数据转置后赋值给源点云对象
+        source_pcd.points = o3d.utility.Vector3dVector(source_points)
+        target_pcd.points = o3d.utility.Vector3dVector(target_points)
+        # 设置距离阈值，单位为米。用于特征匹配时的最大对应距离。
+        distance_threshold = 0.002
+        # 使用RANSAC基于FPFH特征进行点云配准
+        result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+            source_pcd, target_pcd, source_fpfh, target_fpfh,
+            mutual_filter=True,
+            max_correspondence_distance=distance_threshold,  # 特征匹配的最大对应距离
+            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),  # 使用点到点的转换估计方法
+            ransac_n=3,  # RANSAC算法中使用的样本点数
+            checkers=[
+                o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),  # 基于边长的对应关系检查器
+                o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)  # 基于距离的对应关系检查器
+            ],
+            criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(40000, 500)  # RANSAC收敛准则
+        )
+        
+        # 返回匹配的fitness作为指标
+        return result.fitness
+    #原始pca
+    def pca_calibration(self, source_cloud, target_cloud):
+        # 将源点云和目标点云的点转换为NumPy数组
+        source_points = np.asarray(source_cloud.points)
+        target_points = np.asarray(target_cloud.points)
 
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        min_area = 3
-        large_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
-        print(f"Number of main contours: {len(large_contours)}")
+        # 计算源点云和目标点云的PCA特征向量和质心
+        # PCA可以找出数据的主要变化方向，质心是所有点的均值，用于数据的归一化处理
+        source_eigenvectors, source_centroid = self.compute_pca(source_points)
+        target_eigenvectors, target_centroid = self.compute_pca(target_points)
 
-        interpolated_contours = []
-        for i, contour in enumerate(large_contours):
-            num_points = len(contour)
-            print(f"Contour {i} has {num_points} points:")
 
-        return contours, large_contours, interpolated_contours
+        # 计算旋转矩阵和平移向量
+        # 旋转矩阵R是通过将目标点云的特征向量与源点云的特征向量的转置相乘得到的
+        # 这样可以将源点云旋转至与目标点云的主方向一致
+        R = np.dot(target_eigenvectors, source_eigenvectors.T)
+        # 平移向量t是通过目标点云的质心减去旋转后源点云的质心得到的
+        # 这样可以将源点云平移至与目标点云的质心一致
+        t = target_centroid - np.dot(R, source_centroid)
 
-    def publish_processed_image(self, image):
-        image_msg = self.bridge.cv2_to_imgmsg(image, encoding="bgr8")
-        self.processed_image_publisher.publish(image_msg)
+        coarse_transformation = np.eye(4)
+        coarse_transformation[:3, :3] = R
+        coarse_transformation[:3, 3] = t
+        source_cloud.transform(coarse_transformation)
+        return coarse_transformation, source_cloud
+    
+    def pca_adjust_calibration(self, source_cloud, target_cloud):
+        # 将源点云和目标点云的点转换为NumPy数组
+        source_points = np.asarray(source_cloud.points)
+        target_points = np.asarray(target_cloud.points)
+        
+        # 计算源点云和目标点云的PCA特征向量和质心
+        source_eigenvectors, source_centroid = self.compute_pca(source_points)
+        target_eigenvectors, target_centroid = self.compute_pca(target_points)
+        # 计算源点云和目标点云的FPFH特征
+        source_fpfh = self.compute_fpfh_feature(source_points)
+        target_fpfh = self.compute_fpfh_feature(target_points)
 
-    def create_pointcloud2_msg(self, points, idx):
-        header = Header(frame_id='camera_infra1_optical_frame', stamp=self.get_clock().now().to_msg())
-        fields = [PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-                  PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-                  PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-                  PointField(name='rgb', offset=12, datatype=PointField.UINT32, count=1)]
-        point_cloud_msg = pc2.create_cloud(header, fields, points)
-        if idx == 0:
-            self.lowon_publisher.publish(point_cloud_msg)
-            print("lowon Cloud published")
-        elif idx == 1:
-            self.lowoff_publisher.publish(point_cloud_msg)
-            print("lowoff Cloud published")
-        elif idx == 7:
-            self.roi_publisher.publish(point_cloud_msg)
-            print("roi Point Cloud published")
+        # 初始化结果列表
+        initial_results = []
 
+        # 遍历所有 8 种可能的主轴方向组合
+        for i in range(8):
+            signs = [(-1 if i & (1 << bit) else 1) for bit in range(3)]  # 生成一个包含3个元素的列表，分别为-1或1
+            adjusted_source_eigenvectors = source_eigenvectors * signs  # 调整源点云的特征向量方向
+
+            # 计算旋转矩阵和平移向量
+            R = np.dot(target_eigenvectors, adjusted_source_eigenvectors.T)
+            t = target_centroid - np.dot(R, source_centroid)
+            
+            # 将源点云的点进行变换
+            transformed_source_points = self.transform_points(source_points, R, t)
+            # 计算均方误差 (MSE)
+            mse = self.calculate_mse(transformed_source_points, target_points)
+            # 计算重叠率
+            overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
+
+            # print(f"mse: {mse}, overlap: {overlap_ratio}")
+            initial_results.append((mse, overlap_ratio, R, t, tuple(signs)))
+
+        # 筛选出MSE最小或重叠率最大的结果
+        min_mse = min(result[0] for result in initial_results)
+        max_overlap_ratio = max(result[1] for result in initial_results)
+
+        filtered_results = [result for result in initial_results if result[0] == min_mse or result[1] == max_overlap_ratio]
+        
+        # 精细评估：基于FPFH匹配的fitness
+        best_result = None
+        best_fpfh_fitness = -1
+        i = 0
+        for mse, overlap_ratio, R, t, signs in filtered_results:
+            # 将源点云的点进行变换
+            transformed_source_points = self.transform_points(source_points, R, t)
+            # 计算变换后的源点云的FPFH特征
+            transformed_source_fpfh = self.compute_fpfh_feature(transformed_source_points)
+            # 计算FPFH匹配的fitness
+            fpfh_fitness = self.match_fpfh(transformed_source_points, target_points, transformed_source_fpfh, target_fpfh)
+            print(f"{i}:FPFH fitness: {fpfh_fitness}, signs: {signs}")
+            i += 1
+            # 如果当前的FPFH匹配fitness更好，则更新最佳结果
+            if fpfh_fitness > best_fpfh_fitness:
+                best_fpfh_fitness = fpfh_fitness
+                best_result = (mse, overlap_ratio, R, t, signs)
+
+
+        mse, overlap_ratio, R, t, signs = best_result
+        coarse_transformation = np.eye(4)
+        coarse_transformation[:3, :3] = R
+        coarse_transformation[:3, 3] = t
+        source_cloud.transform(coarse_transformation)
+        return coarse_transformation, source_cloud, mse, signs
+
+
+
+
+class CurveICP:
+    def __init__(self, threshold=0.001, angle_threshold=np.pi / 6):
+        self.threshold = threshold  # 设置距离阈值
+        self.angle_threshold = angle_threshold  # 设置角度阈值
+
+    def icp_fine_registration(self, source, target):
+        source_points = np.asarray(source.points)  # 转换源点云为NumPy数组
+        target_points = np.asarray(target.points)  # 转换目标点云为NumPy数组
+        source_tangents = self.compute_tangents(source_points)  # 计算源点云的切线
+        target_tangents = self.compute_tangents(target_points)  # 计算目标点云的切线
+
+        prev_error = float('inf')  # 初始化前一轮的误差为无穷大
+        for i in range(50):  # 进行50次迭代
+            tree = cKDTree(target_points)  # 构建目标点云的KD树
+            distances, indices = tree.query(source_points, k=1)  # 查找每个源点最近的目标点
+            closest_points = target_points[indices]  # 找到最近的目标点
+            closest_tangents = target_tangents[indices]  # 找到最近的目标点的切线
+
+            valid_pairs = self.filter_pairs_by_tangent(source_points, source_tangents, closest_points, closest_tangents)  # 过滤掉不满足角度约束的点对
+            print(f"Iteration {i + 1}: Number of valid pairs = {len(valid_pairs)}")  # 打印有效点对的数量
+            if len(valid_pairs) == 0:
+                break  # 如果没有有效的点对，终止迭代
+
+            source_valid = np.array([p[0] for p in valid_pairs])  # 获取有效的源点
+            target_valid = np.array([p[1] for p in valid_pairs])  # 获取有效的目标点
+
+            R, t = self.compute_transformation(source_valid, target_valid)  # 计算变换矩阵R和平移向量t
+            source_points = np.dot(source_points, R.T) + t  # 应用变换矩阵和平移向量到源点云
+            source_tangents = self.compute_tangents(source_points)  # 重新计算变换后的源点云的切线
+
+            error = np.mean(np.linalg.norm(source_valid - target_valid, axis=1))  # 计算当前轮次的误差
+            # print(f"Iteration {i + 1}: Error = {error}")
+            if np.abs(prev_error - error) < 1e-6:
+                break  # 如果误差变化很小，终止迭代
+            prev_error = error  # 更新前一轮的误差
+
+        transformation = np.eye(4)  # 初始化4x4的变换矩阵为单位矩阵
+        transformation[:3, :3] = R  # 将旋转矩阵R赋值到变换矩阵的左上角3x3部分
+        transformation[:3, 3] = t  # 将平移向量t赋值到变换矩阵的第4列前三行
+        # 计算RMSE
+        inlier_rmse = np.sqrt(np.mean((source_valid - target_valid) ** 2))
+        # 计算Fitness
+        inliers = distances < self.threshold
+        fitness = np.sum(inliers) / len(source_points)
+        return transformation, fitness, inlier_rmse, len(valid_pairs)  # 返回变换矩阵，最终误差和有效点对的数量
+
+    def compute_tangents(self, points):
+        tangents = []
+        for i in range(1, len(points) - 1):
+            tangent = (points[i + 1] - points[i - 1]) / 2  # 计算切线
+            tangent /= np.linalg.norm(tangent)  # 归一化切线向量
+            tangents.append(tangent)
+        tangents = [tangents[0]] + tangents + [tangents[-1]]  # 补充第一个和最后一个切线向量
+        return np.array(tangents)  # 返回切线向量数组
+
+    def filter_pairs_by_tangent(self, source_points, source_tangents, target_points, target_tangents):
+        valid_pairs = []
+        for s_point, s_tangent, t_point, t_tangent in zip(source_points, source_tangents, target_points, target_tangents):
+            angle = np.arccos(np.clip(np.dot(s_tangent, t_tangent), -1.0, 1.0))  # 计算两个切线向量之间的夹角
+            if angle < self.angle_threshold:  # 如果夹角小于角度阈值，认为是有效点对
+                valid_pairs.append((s_point, t_point))
+        return valid_pairs  # 返回有效点对
+
+    def compute_transformation(self, source, target):
+        source_centroid = np.mean(source, axis=0)  # 计算源点云质心
+        target_centroid = np.mean(target, axis=0)  # 计算目标点云质心
+        H = (source - source_centroid).T @ (target - target_centroid)  # 计算协方差矩阵
+        U, S, Vt = np.linalg.svd(H)  # 进行SVD分解
+        R = Vt.T @ U.T  # 计算旋转矩阵R
+        if np.linalg.det(R) < 0:  # 如果旋转矩阵的行列式为负
+            Vt[2, :] *= -1  # 调整Vt
+            R = Vt.T @ U.T  # 重新计算旋转矩阵R
+        t = target_centroid - R @ source_centroid  # 计算平移向量t
+        return R, t  # 返回旋转矩阵R和平移向量t
+
+class ICPRegistration:
+    def icp_fine_registration(self, source, target, threshold=0.02):
+        
+        trans_init = np.eye(4)
+        reg_p2p = o3d.pipelines.registration.registration_icp(
+            source, target, threshold, trans_init,
+            o3d.pipelines.registration.TransformationEstimationPointToPoint())
+        transformation_icp = reg_p2p.transformation
+
+        # 评估精配准结果
+        fitness, inlier_rmse = evaluate_registration(source, target, transformation_icp, threshold)
+
+        source.transform(transformation_icp)
+       
+        return transformation_icp, fitness, inlier_rmse
+ 
+class KalmanFilter:
+    def __init__(self, state_dim, measurement_dim):
+        self.state_dim = state_dim
+        self.measurement_dim = measurement_dim
+        self.A = np.eye(state_dim)
+        self.H = np.eye(state_dim)
+        self.Q = np.eye(state_dim) * 0.01
+        self.R = np.eye(state_dim) * 0.1
+        self.P = np.eye(state_dim)
+        self.x = np.zeros(state_dim)
+
+    def update(self, z):
+        # Prediction step
+        x_pred = np.dot(self.A, self.x)
+        P_pred = np.dot(np.dot(self.A, self.P), self.A.T) + self.Q
+
+        # Update step
+        y = z - np.dot(self.H, x_pred)
+        S = np.dot(np.dot(self.H, P_pred), self.H.T) + self.R
+        K = np.dot(np.dot(P_pred, self.H.T), np.linalg.inv(S))
+        self.x = x_pred + np.dot(K, y)
+        self.P = P_pred - np.dot(np.dot(K, self.H), P_pred)
+
+    def get_state(self):
+        return self.x 
+    
+
+
+  
+# class FPFHRegistration_old:
+#     def compute_fpfh_feature(self, point_cloud, threshold):
+#         radius_normal = threshold * 10
+#         point_cloud.estimate_normals(
+#             o3d.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
+#         radius_feature = threshold * 20
+#         fpfh = o3d.pipelines.registration.compute_fpfh_feature(
+#             point_cloud,
+#             o3d.geometry.KDTreeSearchParamHybrid(radius=radius_feature, max_nn=100))
+#         return fpfh
+
+#     def execute_global_registration(self, source, target, source_fpfh, target_fpfh, threshold):
+#         distance_threshold = threshold
+#         print(":: RANSAC registration on point clouds.")
+#         result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+#             source, target, source_fpfh, target_fpfh, True,
+#             distance_threshold,
+#             o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
+#             3, [
+#                 o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+#                 o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold),
+#             ], o3d.pipelines.registration.RANSACConvergenceCriteria(800000, 1000))
+#         return result
+
+#     def fpfh_ransac_coarse_registration(self, source, target, threshold):
+#         start_time_ransac = time.time()
+#         source_fpfh = self.compute_fpfh_feature(source, threshold)
+#         target_fpfh = self.compute_fpfh_feature(target, threshold)
+        
+#         result_ransac = self.execute_global_registration(source, target, source_fpfh, target_fpfh, threshold)
+        
+#         # 应用 RANSAC 结果变换到原始点云
+#         fitness, inlier_rmse = evaluate_registration(source, target, result_ransac.transformation, threshold)
+
+#         end_time_ransac = time.time()
+#         ransac_time = end_time_ransac - start_time_ransac
+#         source.transform(result_ransac.transformation)
+#         print("粗配准后的变换矩阵：")
+#         print(f"{result_ransac.transformation}")
+#         print("ransac粗配准后的评估结果：")
+#         print(f"RMSE: {inlier_rmse}")
+#         print(f"Fitness: {fitness}")
+#         print(f"ransac粗配准耗时: {ransac_time} 秒")
+#         return  result_ransac.transformation, source
 
 def main(args=None):
     rclpy.init(args=args)
-    image_subscriber = ImageSubscriber()
-    rclpy.spin(image_subscriber)
-    cv2.destroyAllWindows()
-    image_subscriber.destroy_node()
+    processor = PointCloudRegistration()
+    rclpy.spin(processor)
+    processor.destroy_node()
     rclpy.shutdown()
-
-if __name__ == '__main__':
+    
+if __name__ == "__main__":
     main()
+
+
+
+
+
