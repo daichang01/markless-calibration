@@ -52,7 +52,7 @@ class ImageSubscriber(Node):
         # self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
-        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0729.pt") #yolov8在本地训练的实例分割模型
+        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0730.pt") #yolov8在本地训练的实例分割模型
         
     def save_images(self):
         if self.latest_color_image is not None and self.latest_depth_image is not None:
@@ -95,7 +95,8 @@ class ImageSubscriber(Node):
         cv_depth_normalized = cv2.normalize(self.latest_depth_image, None, 0, 255, cv2.NORM_MINMAX)
         cv_depth_normalized = np.uint8(cv_depth_normalized)  # 转换为8位图像
         # 显示处理后的RGB和深度图像
-        # cv2.imshow("Color Image",  self.latest_color_image)
+        cv2.namedWindow("Color Image", cv2.WINDOW_NORMAL)
+        cv2.imshow("Color Image",  self.latest_color_image)
         # cv2.imshow("Depth Image", cv_depth_normalized)
         if cv2.waitKey(10) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
@@ -115,106 +116,120 @@ class ImageSubscriber(Node):
             print("No objects detected")
 
     def process_oneres(self, r):
+        detected_classes = set()
+        points_by_class = {0: [], 1:[]}
         img = np.copy(r.orig_img)
         img_name = Path(r.path).stem
+
         # 遍历每个结果中的对象，这些对象可能代表不同的检测到的实体
         for ci, c in enumerate(r):
             # 获取检测到的对象的标签名称
             # label = c.names[c.boxes.cls.tolist().pop()]
             cls_idx = int(c.boxes.cls[0])  # 获取类别索引
-            label = c.names[cls_idx]  # 使用索引获取标签名称
+            detected_classes.add(cls_idx)  # 添加类别到集合
 
-            # 创建一个与原图大小相同的黑色掩码
-            b_mask = np.zeros(img.shape[:2], np.uint8)
-            # 从检测对象中提取轮廓并转换为整数坐标
-            contour = c.masks.xy.pop()
-            contour = contour.astype(np.int32)
-            contour = contour.reshape(-1, 1, 2) #符合 OpenCV cv2.drawContours 函数的要求
-            _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
-            # 将单通道的黑白掩码转换为三通道格式
-            mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
-            # 结果是原图中只有与掩码白色区域相对应的部分被保留，其余部分因为与黑色（0）的与操作而变为黑色。
-            isolated = cv2.bitwise_and(mask3ch, img)
-            #  Bounding box coordinates
-            x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
-            print(f"{cls_idx}_{label}: {x1, y1, x2, y2}")
-            # 得到感兴趣区域
-            iso_crop = isolated[y1:y2, x1:x2]
+            if cls_idx in points_by_class:
 
-            # cv2.namedWindow(f"{cls_idx}_{label}", cv2.WINDOW_NORMAL)
-            # cv2.imshow(f"{cls_idx}_{label}", iso_crop)
-            # cv2.waitKey(5)
+                label = c.names[cls_idx]  # 使用索引获取标签名称
 
-            ############################################## 牙齿轮廓提取 #####################################################
-            contours, large_contours, interpolated_contours = self.edge_extration(x1, y1, x2, y2, b_mask, iso_crop)
-            
-            # 选择面积最大的轮廓绘制
-            if contours:
-                # 根据面积排序轮廓
-                contours = sorted(contours, key=cv2.contourArea, reverse=True)
-                # contours = contours[:len(large_contours)] # 选择前 n个 根据实际情况调整
-                contours = contours[:4] # 选择前 n个 根据实际情况调整
-                #绘制前n个最大轮廓
-                mask = np.zeros_like(iso_crop)
-                cv2.drawContours(mask, contours, -1, (0, 255, 0), 1)
+                # 创建一个与原图大小相同的黑色掩码
+                b_mask = np.zeros(img.shape[:2], np.uint8)
+                # 从检测对象中提取轮廓并转换为整数坐标
+                contour = c.masks.xy.pop()
+                contour = contour.astype(np.int32)
+                contour = contour.reshape(-1, 1, 2) #符合 OpenCV cv2.drawContours 函数的要求
+                _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+                # 将单通道的黑白掩码转换为三通道格式
+                mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+                # 结果是原图中只有与掩码白色区域相对应的部分被保留，其余部分因为与黑色（0）的与操作而变为黑色。
+                isolated = cv2.bitwise_and(mask3ch, img)
+                #  Bounding box coordinates
+                x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+                print(f"{cls_idx}_{label}: {x1, y1, x2, y2}")
+                # 得到感兴趣区域
+                iso_crop = isolated[y1:y2, x1:x2]
 
-                overlaid_image = cv2.addWeighted(iso_crop, 0.7, mask, 0.3, 0)
-
-                # cv2.namedWindow(f"{cls_idx}_{label} Overlaid", cv2.WINDOW_NORMAL)
-                # cv2.imshow(f"{cls_idx}_{label}mask", mask)
-                # cv2.imshow(f"{cls_idx}_{label} Overlaid", overlaid_image)
+                # cv2.namedWindow(f"{cls_idx}_{label}", cv2.WINDOW_NORMAL)
+                # cv2.imshow(f"{cls_idx}_{label}", iso_crop)
                 # cv2.waitKey(5)
-                # self.publish_processed_image(overlaid_image)
 
-            ###############################  深度图边缘转点云 ##################################################
-            start_x, end_x = x1, x2
-            start_y, end_y = y1, y2      
+                ############################################## 牙齿轮廓提取 #####################################################
+                contours, large_contours, interpolated_contours = self.edge_extration(x1, y1, x2, y2, b_mask, iso_crop)
+                
+                # 选择面积最大的轮廓绘制
+                if contours:
+                    # 根据面积排序轮廓
+                    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+                    # contours = contours[:len(large_contours)] # 选择前 n个 根据实际情况调整
+                    contours = contours[:4] # 选择前 n个 根据实际情况调整
+                    #绘制前n个最大轮廓
+                    mask = np.zeros_like(iso_crop)
+                    cv2.drawContours(mask, contours, -1, (0, 255, 0), 1)
 
-            points_edge = []
-            points_roi = []
+                    overlaid_image = cv2.addWeighted(iso_crop, 0.7, mask, 0.3, 0)
+
+                    cv2.namedWindow(f"{cls_idx}_{label} Overlaid", cv2.WINDOW_NORMAL)
+                    # cv2.imshow(f"{cls_idx}_{label}mask", mask)
+                    cv2.imshow(f"{cls_idx}_{label} Overlaid", overlaid_image)
+                    cv2.waitKey(5)
+                    if cls_idx == 0: 
+                        self.publish_processed_image(overlaid_image)
+                    
+                    elif cls_idx == 1:
+                        # 不展示
+                        pass
+                    
+
+                ###############################  深度图边缘转点云 ##################################################
+                start_x, end_x = x1, x2
+                start_y, end_y = y1, y2      
+
+                points_edge = []
+                points_roi = []
 
 
-            # for v in range(start_y, end_y):
-            #     for u in range(start_x, end_x):
-            #         depth = cv_depth_image[v, u]
-            for contour in large_contours:
-                for point in contour:
-                    u = point[0][0] + start_x
-                    v = point[0][1] + start_y
-                    depth = self.latest_depth_image[v, u]
-                    if depth > 0:  # 简单的深度滤波，移除深度值为0的点
-                        # 这里的内参需要根据实际相机调整
-                        z = depth * 0.001  # scale depth to meters
-                        x = (u - self.cx) * z / self.fx
-                        y = (v - self.cy) * z / self.fy
-                        b, g, r = self.latest_color_image[v, u].astype(np.uint8)
-                        # print("BGR values:", b, g, r)  # 直接打印看是否有异常
-                        rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
-                        rgb = struct.unpack('I', rgb)[0]
-                        points_edge.append([x, y, z, rgb])
-                        self.points_combined.append([x, y, z, rgb])  # 添加到合并的点云
-
-            
-            self.create_pointcloud2_msg(points_edge, cls_idx)
-            
-            ############################## 裁剪感兴趣区域点云，用于可视化验证 ###############################################
-            for v in range(start_y, end_y):
-                for u in range(start_x, end_x):
-                    depth = self.latest_depth_image[v, u]
-                    if depth > 0:  # 简单的深度滤波，移除深度值为0的点
-                        # 这里的内参需要根据实际相机调整
-                        z = depth * 0.001  # scale depth to meters
-                        x = (u - self.cx) * z / self.fx
-                        y = (v - self.cy) * z / self.fy
-                        b, g, r = self.latest_color_image[v, u].astype(np.uint8)
-                        # print("BGR values:", b, g, r)  # 直接打印看是否有异常
-                        rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
-                        rgb = struct.unpack('I', rgb)[0]
-                        points_roi.append([x, y, z, rgb])
-            val_idx = 7
-                        
-            
-            self.create_pointcloud2_msg(points_roi, val_idx)
+                # for v in range(start_y, end_y):
+                #     for u in range(start_x, end_x):
+                #         depth = cv_depth_image[v, u]
+                for contour in large_contours:
+                    for point in contour:
+                        u = point[0][0] + start_x
+                        v = point[0][1] + start_y
+                        depth = self.latest_depth_image[v, u]
+                        if depth > 0:  # 移除深度值为0的点
+                            z = depth * 0.001  # scale depth to meters
+                            x = (u - self.cx) * z / self.fx
+                            y = (v - self.cy) * z / self.fy
+                            b, g, r = self.latest_color_image[v, u].astype(np.uint8)
+                            # print("BGR values:", b, g, r)  # 直接打印看是否有异常
+                            rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
+                            rgb = struct.unpack('I', rgb)[0]
+                            points_edge.append([x, y, z, rgb])
+                            points_by_class[cls_idx].append([x, y, z, rgb])  # 添加到对应类别的点云
+                               
+                self.create_pointcloud2_msg(points_edge, cls_idx)
+        # 检查是否同时包含类别 0 和 1
+        if 0 in detected_classes and 1 in detected_classes:
+            # 合并类别 0 和 1 的点云数据到 self.points_combined
+            self.points_combined.extend(points_by_class[0])
+            self.points_combined.extend(points_by_class[1])    
+                
+                ############################## 裁剪感兴趣区域点云，用于可视化验证 ###############################################
+                # for v in range(start_y, end_y):
+                #     for u in range(start_x, end_x):
+                #         depth = self.latest_depth_image[v, u]
+                #         if depth > 0:  # 简单的深度滤波，移除深度值为0的点
+                #             # 这里的内参需要根据实际相机调整
+                #             z = depth * 0.001  # scale depth to meters
+                #             x = (u - self.cx) * z / self.fx
+                #             y = (v - self.cy) * z / self.fy
+                #             b, g, r = self.latest_color_image[v, u].astype(np.uint8)
+                #             # print("BGR values:", b, g, r)  # 直接打印看是否有异常
+                #             rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
+                #             rgb = struct.unpack('I', rgb)[0]
+                #             points_roi.append([x, y, z, rgb])
+                # val_idx = 7           
+                # self.create_pointcloud2_msg(points_roi, val_idx)
 
     def edge_extration(self, x1, y1, x2, y2, b_mask, iso_crop):
         ############################################## 牙齿轮廓提取 #####################################################
