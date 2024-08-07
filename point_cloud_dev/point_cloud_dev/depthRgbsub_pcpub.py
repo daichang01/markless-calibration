@@ -52,7 +52,7 @@ class ImageSubscriber(Node):
         # self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
-        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0730.pt") #yolov8在本地训练的实例分割模型
+        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0807.pt") #yolov8在本地训练的实例分割模型
         
     def save_images(self):
         if self.latest_color_image is not None and self.latest_depth_image is not None:

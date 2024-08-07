@@ -15,12 +15,19 @@ class PointCloudRegistration(Node):
         
         # 待配准边缘
 
-        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/lowfrontscan.txt"
-        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/sample_all_in.txt"
-        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/godshot.txt"
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/Vertices6.txt"
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait-to-reg/tracetop.txt"
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/godshot.txt"
+        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/updown5.txt"
+        
         # 口扫点云验证
-        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
-        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/pcavalue.txt"
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait-to-reg/lefttoval.txt"
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/halfval.txt"
+        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/teethreal_downsample.txt"
+
+        
+
         
   
 
@@ -52,24 +59,15 @@ class PointCloudRegistration(Node):
 
         self.source = load_point_cloud(self.source_path)
         self.rvizpcd = load_point_cloud(self.valsource_path)
-        # 对去除离群值后的点云进行插值
-        # num_interpolated_points = 400 # 可以根据需要
-        # if len(self.target.points) < num_interpolated_points:  # 确保需要增加点数时才进行插值
-        #     try:
-        #         self.target = spline_interpolation(self.target, num_interpolated_points)
-        #     except ValueError as e:
-        #         self.get_logger().info(f"Failed to perform spline interpolation: {e}")
-        #         return
-        # else:
-        #     self.get_logger().info("No interpolation needed, point count exceeds required for interpolation.")
-        # self.get_logger().info(f"after interpolation, point cloud with {len(self.source.points)} points)")
         
         # 可视化预处理后的点云
         # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
     ####################  pca粗配准  ##########################################################
         start_time_pca = time.time()
         # 带调整主轴方向的pca
-        coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = self.pca_registrator.pca_adjust_calibration(self.source, self.target)
+        # coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = self.pca_registrator.pca_adjust_calibration(self.source, self.target)
+        coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = self.pca_registrator.pca_adjust_calibration_nofpfh(self.source, self.target)
+        
         # 不带主轴方向调整的pca
         # coarse_transformation, transformed_source_cloud = self.pca_registrator.pca_calibration(self.source, self.target)
         end_time_pca = time.time()
@@ -116,7 +114,7 @@ class PointCloudRegistration(Node):
         combined_transformation = np.dot(fine_transformation, coarse_transformation) 
         print(f"总变换矩阵:{combined_transformation}")
 
-        # 使用卡尔曼滤波进行平滑
+        # 使用卡尔曼滤波进行平滑（未采用）
         combined_transformation_flat = combined_transformation.flatten()
         self.kalman_filter.update(combined_transformation_flat)
         smoothed_transformation_flat = self.kalman_filter.get_state().reshape((4, 4))
@@ -167,6 +165,9 @@ class PCARegistration:
         return transformed_points
 
     def calculate_mse(self, source_points, target_points):
+            # 使用 float64 确保高精度计算
+        source_points = np.asarray(source_points, dtype=np.float64)
+        target_points = np.asarray(target_points, dtype=np.float64)
         # 创建目标点云的KD树
         tree = cKDTree(target_points)
         # 查询源点云中每个点在目标点云中的最近邻点
@@ -237,6 +238,61 @@ class PCARegistration:
         
         # 返回匹配的fitness作为指标
         return result.fitness
+    
+    def pca_adjust_calibration_nofpfh(self, source_cloud, target_cloud):
+        # 将源点云和目标点云的点转换为NumPy数组
+        source_points = np.asarray(source_cloud.points)
+        target_points = np.asarray(target_cloud.points)
+        
+        # 计算源点云和目标点云的PCA特征向量和质心
+        source_eigenvectors, source_centroid = self.compute_pca(source_points)
+        target_eigenvectors, target_centroid = self.compute_pca(target_points)
+
+        # 初始化结果列表
+        initial_results = []
+
+        # 遍历所有 8 种可能的主轴方向组合
+        for i in range(8):
+            signs = [(-1 if i & (1 << bit) else 1) for bit in range(3)]  # 生成一个包含3个元素的列表，分别为-1或1
+            adjusted_source_eigenvectors = source_eigenvectors * signs  # 调整源点云的特征向量方向
+
+            # 计算旋转矩阵和平移向量
+            R = np.dot(target_eigenvectors, adjusted_source_eigenvectors.T)
+            t = target_centroid - np.dot(R, source_centroid)
+            
+            # 将源点云的点进行变换
+            transformed_source_points = self.transform_points(source_points, R, t)
+            # 计算均方误差 (MSE)
+            mse = self.calculate_mse(transformed_source_points, target_points)
+            # 计算重叠率
+            overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
+            print(f"combine: {i}, mse: {mse}, overlap: {overlap_ratio}")
+
+            # 添加到结果列表中
+            initial_results.append((mse, overlap_ratio, R, t, tuple(signs), i))
+
+        # 筛选出MSE最小和重叠率最大的结果
+        min_mse_result = min(initial_results, key=lambda x: x[0])
+        max_overlap_result = max(initial_results, key=lambda x: x[1])
+        
+        # 确保筛选出的结果是同一个
+        if min_mse_result == max_overlap_result:
+            best_result = min_mse_result
+        else:
+            # 如果不是同一个，选择重叠率最大的那个
+            best_result = max_overlap_result
+
+        mse, overlap_ratio, R, t, signs, i = best_result
+        print(f"select: {i}, mse: {mse}, overlap: {overlap_ratio},signs: {signs}")
+        coarse_transformation = np.eye(4)
+        coarse_transformation[:3, :3] = R
+        coarse_transformation[:3, 3] = t
+        source_cloud.transform(coarse_transformation)
+        return coarse_transformation, source_cloud, mse, signs
+
+
+
+
     #原始pca
     def pca_calibration(self, source_cloud, target_cloud):
         # 将源点云和目标点云的点转换为NumPy数组
@@ -263,6 +319,7 @@ class PCARegistration:
         source_cloud.transform(coarse_transformation)
         return coarse_transformation, source_cloud
     
+
     def pca_adjust_calibration(self, source_cloud, target_cloud):
         # 将源点云和目标点云的点转换为NumPy数组
         source_points = np.asarray(source_cloud.points)
@@ -328,7 +385,8 @@ class PCARegistration:
         coarse_transformation[:3, 3] = t
         source_cloud.transform(coarse_transformation)
         return coarse_transformation, source_cloud, mse, signs
-
+    
+    
 
 
 
@@ -351,7 +409,7 @@ class CurveICP:
             closest_tangents = target_tangents[indices]  # 找到最近的目标点的切线
 
             valid_pairs = self.filter_pairs_by_tangent(source_points, source_tangents, closest_points, closest_tangents)  # 过滤掉不满足角度约束的点对
-            print(f"Iteration {i + 1}: Number of valid pairs = {len(valid_pairs)}")  # 打印有效点对的数量
+            # print(f"Iteration {i + 1}: Number of valid pairs = {len(valid_pairs)}")  # 打印有效点对的数量
             if len(valid_pairs) == 0:
                 break  # 如果没有有效的点对，终止迭代
 
