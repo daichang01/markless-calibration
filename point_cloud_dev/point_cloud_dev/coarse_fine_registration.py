@@ -9,7 +9,8 @@ class PointCloudRegistration(Node):
         self.pub_ori = self.create_publisher(PointCloud2, '/ori_pcd_topic', 10)
         self.pub_target = self.create_publisher(PointCloud2, '/target_pcd_topic', 10)
         self.pub_trans = self.create_publisher(PointCloud2, '/trans_pcd_topic', 10)
-        self.timer = self.create_timer(1, self.timer_callback)
+        self.pub_point = self.create_publisher(PointCloud2, '/trans_pcd_point', 10)
+        # self.timer = self.create_timer(1, self.timer_callback)
         # self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
         self.combined_sub = self.create_subscription(PointCloud2, '/combined_point_cloud', self.lowfront_callback, 10)
         
@@ -17,19 +18,25 @@ class PointCloudRegistration(Node):
 
         # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/Vertices6.txt"
         # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait-to-reg/tracetop.txt"
-        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/godshot.txt"
-        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/updown5.txt"
+        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up4down2 - Cloud.txt"
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/updown5.txt"
         
         # 口扫点云验证
         # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
-        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait-to-reg/lefttoval.txt"
-        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/halfval.txt"
-        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/teethreal_downsample.txt"
 
+        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/halfval.txt"
+        
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/teethreal_downsample.txt"
+
+        #待验证点
+        self.valpoints_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/points/lowfront_points.txt"
         
 
         
-  
+        # 图像坐标系中的点 (x, y, z)
+        self.point_img = np.array([-0.090951, -0.027712, 0.294036, 1.0]).reshape(4, 1)
+
+        
 
         self.rvizsource = load_point_cloud(self.valsource_path)
 
@@ -59,6 +66,7 @@ class PointCloudRegistration(Node):
 
         self.source = load_point_cloud(self.source_path)
         self.rvizpcd = load_point_cloud(self.valsource_path)
+        self.pointsval=  load_point_cloud(self.valpoints_path)
         
         # 可视化预处理后的点云
         # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
@@ -81,31 +89,31 @@ class PointCloudRegistration(Node):
 
         ####################  曲线ICP精配准  ##########################################################
 
-        start_time_icp = time.time()
-        fine_transformation, fitness, inlier_rmse, num_valid_pairs = self.curve_icp_registrator.icp_fine_registration \
-            (transformed_source_cloud, self.target)
-        end_time_icp = time.time()
-        icp_time = end_time_icp - start_time_icp
-        print("曲线ICP精配准后的变换矩阵：")
-        print(f"{fine_transformation}")
-        print("曲线ICP精配准后的评估结果：")
-        print(f"RMSE: {inlier_rmse}")
-        print(f"Fitness: {fitness}")
-        print(f"曲线ICP精配准耗时: {icp_time} 秒")
+        # start_time_icp = time.time()
+        # fine_transformation, fitness, inlier_rmse, num_valid_pairs = self.curve_icp_registrator.icp_fine_registration \
+        #     (transformed_source_cloud, self.target)
+        # end_time_icp = time.time()
+        # icp_time = end_time_icp - start_time_icp
+        # print("曲线ICP精配准后的变换矩阵：")
+        # print(f"{fine_transformation}")
+        # print("曲线ICP精配准后的评估结果：")
+        # print(f"RMSE: {inlier_rmse}")
+        # print(f"Fitness: {fitness}")
+        # print(f"曲线ICP精配准耗时: {icp_time} 秒")
 
     ####################  icp精配准  ##########################################################
 
-        # start_time_icp = time.time()
-        # fine_transformation, fitness, inlier_rmse = self.icp_registrator.icp_fine_registration \
-        #     (transformed_source_cloud, self.target, self.threshold)
-        # end_time_icp = time.time()
-        # icp_time = end_time_icp - start_time_icp
-        # print("精配准后的变换矩阵：")
-        # print(f"{fine_transformation}")
-        # print("精配准后的评估结果：")
-        # print(f"RMSE: {inlier_rmse}")
-        # print(f"Fitness: {fitness}")
-        # print(f"icp精配准耗时: {icp_time} 秒")
+        start_time_icp = time.time()
+        fine_transformation, fitness, inlier_rmse = self.icp_registrator.icp_fine_registration \
+            (transformed_source_cloud, self.target, self.threshold)
+        end_time_icp = time.time()
+        icp_time = end_time_icp - start_time_icp
+        print("精配准后的变换矩阵：")
+        print(f"{fine_transformation}")
+        print("精配准后的评估结果：")
+        print(f"RMSE: {inlier_rmse}")
+        print(f"Fitness: {fitness}")
+        print(f"icp精配准耗时: {icp_time} 秒")
 #################### ransac粗配准  + icp精配准 #######################################################
         # coarse_transformation, transformed_source_cloud = self.fpfh_registrator.fpfh_ransac_coarse_registration(self.source, self.target,self.threshold)
         # fine_transformation = self.icp_registrator.icp_fine_registration(transformed_source_cloud, self.target ,self.threshold) 
@@ -115,14 +123,23 @@ class PointCloudRegistration(Node):
         print(f"总变换矩阵:{combined_transformation}")
 
         # 使用卡尔曼滤波进行平滑（未采用）
-        combined_transformation_flat = combined_transformation.flatten()
-        self.kalman_filter.update(combined_transformation_flat)
-        smoothed_transformation_flat = self.kalman_filter.get_state().reshape((4, 4))
+        # combined_transformation_flat = combined_transformation.flatten()
+        # self.kalman_filter.update(combined_transformation_flat)
+        # smoothed_transformation_flat = self.kalman_filter.get_state().reshape((4, 4))
 
         # self.rvizpcd.transform(smoothed_transformation_flat) #粗配准 + 精配准 + 卡尔曼滤波
         self.rvizpcd.transform(combined_transformation) #粗配准 + 精配准
+        self.pointsval.transform(combined_transformation)
+        # 计算变换后的点在相机坐标系中的位置
+        point_cam = np.dot(combined_transformation, self.point_img)
+        # 提取变换后的点 (x', y', z')
+        x_prime, y_prime, z_prime = point_cam[:3, 0]
+
+        # 打印结果
+        print(f"Point1 in camera coordinate system: ({x_prime}, {y_prime}, {z_prime})")
         # self.rvizpcd.transform(coarse_transformation) # 只进行粗配准
         self.publish_point_cloud(self.pub_trans, self.rvizpcd)
+        self.publish_point_cloud(self.pub_point, self.pointsval)
         print("publish trans scan point cloud !")
         
     def timer_callback(self):

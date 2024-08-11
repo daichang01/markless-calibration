@@ -52,7 +52,7 @@ class ImageSubscriber(Node):
         # self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
-        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0807.pt") #yolov8在本地训练的实例分割模型
+        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0810.pt") #yolov8在本地训练的实例分割模型
         
     def save_images(self):
         if self.latest_color_image is not None and self.latest_depth_image is not None:
@@ -100,7 +100,7 @@ class ImageSubscriber(Node):
         # cv2.imshow("Depth Image", cv_depth_normalized)
         if cv2.waitKey(10) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
-############################################################### yolo检测demo ################3#########################################
+############################################################### yolo实例分割################3#########################################
         # 使用模型对最新的彩色图像进行预测，得到检测结果
         yolo_results = self.model.predict(self.latest_color_image)
         # 如果不想进行预测，可以将结果设为 None
