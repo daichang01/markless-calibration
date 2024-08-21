@@ -22,9 +22,9 @@ class PointCloudRegistration(Node):
         # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/updown5.txt"
         
         # 口扫点云验证
-        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/pcd/wait-to-reg/newteeth_m_uniform_down.txt"
+        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/frontval_downsample.txt"
 
-        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/halfval.txt"
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/halfval.txt"
         
         # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/teethreal_downsample.txt"
 
