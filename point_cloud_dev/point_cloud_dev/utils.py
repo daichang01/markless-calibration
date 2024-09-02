@@ -37,14 +37,28 @@ def create_local_axis(point_cloud, size=0.01):
     centroid = np.mean(np.asarray(point_cloud.points), axis=0)
     return o3d.geometry.TriangleMesh.create_coordinate_frame(size=size, origin=centroid)
 def load_point_cloud(file_path):
+    # 从文件加载点云数据。假设数据格式为：X Y Z R G B
     data = np.loadtxt(file_path)
+    
+    # 从前三列提取坐标（X, Y, Z）
     points = data[:, :3]
+    
+    # 如果存在，从第四到第六列提取颜色数据（R, G, B），并将颜色标准化到 [0, 1] 范围
     colors = data[:, 3:6] / 255.0 if data.shape[1] > 3 else None
+    
+    # 创建一个空的Open3D点云对象
     point_cloud = o3d.geometry.PointCloud()
+    
+    # 将提取的坐标点赋值给点云对象的点属性
     point_cloud.points = o3d.utility.Vector3dVector(points)
+    
+    # 如果存在颜色信息，也将颜色信息赋值给点云对象的颜色属性
     if colors is not None:
         point_cloud.colors = o3d.utility.Vector3dVector(colors)
+    
+    # 返回装载好的点云对象
     return point_cloud
+
 
 def pointcloud2_to_open3d(pointcloud2_msg):
     points_list = list(pc2.read_points(pointcloud2_msg, field_names=("x", "y", "z"), skip_nans=True))

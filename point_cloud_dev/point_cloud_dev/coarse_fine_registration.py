@@ -11,24 +11,26 @@ class PointCloudRegistration(Node):
         self.pub_trans = self.create_publisher(PointCloud2, '/trans_pcd_topic', 10)
         self.pub_point = self.create_publisher(PointCloud2, '/trans_pcd_point', 10)
         # self.timer = self.create_timer(1, self.timer_callback)
-        # self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
-        self.combined_sub = self.create_subscription(PointCloud2, '/combined_point_cloud', self.lowfront_callback, 10)
+        # 只有上边缘
+        self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
+        # 利用上边缘和牙龈
+        # self.combined_sub = self.create_subscription(PointCloud2, '/combined_point_cloud', self.lowfront_callback, 10)
         
         # 待配准边缘
 
         # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/Vertices6.txt"
-        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait-to-reg/tracetop.txt"
-        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up4down2 - Cloud.txt"
+        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up6.txt"
+        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up6down2 - Cloud.txt"
         # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/updown5.txt"
         
         # 口扫点云验证
-        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/frontval_downsample.txt"
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/frontval_downsample.txt"
 
-        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/halfval.txt"
+        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/halfval.txt"
         
         # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/teethreal_downsample.txt"
 
-        #待验证点
+        #待验证标记点
         self.valpoints_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/points/lowfront_points.txt"
         
 
@@ -69,15 +71,17 @@ class PointCloudRegistration(Node):
         self.pointsval=  load_point_cloud(self.valpoints_path)
         
         # 可视化预处理后的点云
-        # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
+        visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
     ####################  pca粗配准  ##########################################################
         start_time_pca = time.time()
         # 带调整主轴方向的pca
-        # coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = self.pca_registrator.pca_adjust_calibration(self.source, self.target)
-        coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = self.pca_registrator.pca_adjust_calibration_nofpfh(self.source, self.target)
+        #法一：根据重叠率调整主轴方向
+        # coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = self.pca_registrator.pca_adjust_calibration_nofpfh(self.source, self.target)
+        #法二： 
+        # coarse_transformation, transformed_source_cloud, best_mse= self.pca_registrator.pca_adjust_calibration_dot_product(self.source, self.target)
         
-        # 不带主轴方向调整的pca
-        # coarse_transformation, transformed_source_cloud = self.pca_registrator.pca_calibration(self.source, self.target)
+        # 法三 原始pca
+        coarse_transformation, transformed_source_cloud = self.pca_registrator.pca_calibration(self.source, self.target)
         end_time_pca = time.time()
 
         pca_time = end_time_pca - start_time_pca
@@ -114,10 +118,7 @@ class PointCloudRegistration(Node):
         print(f"RMSE: {inlier_rmse}")
         print(f"Fitness: {fitness}")
         print(f"icp精配准耗时: {icp_time} 秒")
-#################### ransac粗配准  + icp精配准 #######################################################
-        # coarse_transformation, transformed_source_cloud = self.fpfh_registrator.fpfh_ransac_coarse_registration(self.source, self.target,self.threshold)
-        # fine_transformation = self.icp_registrator.icp_fine_registration(transformed_source_cloud, self.target ,self.threshold) 
-        # combined_transformation = np.dot(fine_transformation, coarse_transformation)
+
     #############粗配准 + 精配准  ##########################################################    
         combined_transformation = np.dot(fine_transformation, coarse_transformation) 
         print(f"总变换矩阵:{combined_transformation}")
@@ -172,6 +173,15 @@ class PCARegistration:
         
         # 重排特征向量，使其与特征值的降序对应。这确保了第一个特征向量对应最大的特征值。
         eigenvectors = eigenvectors[:, idx]
+
+        # 确保特征向量的方向一致性，例如，保持右手法则
+        if np.linalg.det(eigenvectors) < 0:
+            eigenvectors[:, 2] = -eigenvectors[:, 2]
+
+            # 打印出最大的三个特征值，和相应的特征向量
+        print("length of eigenvectors:", eigenvectors.shape[1])
+        print("Top 3 eigenvalues:", eigenvalues[:3])
+        print("Corresponding eigenvectors:\n", eigenvectors[:, :3])
         
         # 返回排序后的特征向量和中心点。特征向量的每一列都是一个主成分方向。
         return eigenvectors, centroid
@@ -204,57 +214,7 @@ class PCARegistration:
         # 计算重叠率，即重叠点的数量除以源点云的总点数
         return overlap_count / len(source_points)
 
-    def compute_fpfh_feature(self, points):
-        # 创建一个Open3D点云对象
-        pcd = o3d.geometry.PointCloud()
-        
-        # 将输入的点坐标转换为Open3D的点云格式
-        pcd.points = o3d.utility.Vector3dVector(points)
-        
-        # 估计点云的法线
-        # 参数search_param用于指定KD树搜索的参数
-        # radius: 搜索半径，单位为米。这里设置为0.003米。
-        # max_nn: 搜索的最大邻居数。这里设置为30。
-        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.003, max_nn=30))
-        
-        # 计算FPFH特征
-        # 参数search_param用于指定KD树搜索的参数
-        # radius: 搜索半径，单位为米。这里设置为0.005米。
-        # max_nn: 搜索的最大邻居数。这里设置为50。
-        fpfh = o3d.pipelines.registration.compute_fpfh_feature(
-            pcd,
-            o3d.geometry.KDTreeSearchParamHybrid(radius=0.005, max_nn=50)
-        )
-        
-        # 返回计算得到的FPFH特征
-        return fpfh
-    
-    def match_fpfh(self, source_points, target_points,source_fpfh, target_fpfh):
-        # 创建一个Open3D点云对象，用于存储源点云
-        source_pcd = o3d.geometry.PointCloud()
-        target_pcd = o3d.geometry.PointCloud()
-        
-        # 将源和目标FPFH特征的数据转置后赋值给源点云对象
-        source_pcd.points = o3d.utility.Vector3dVector(source_points)
-        target_pcd.points = o3d.utility.Vector3dVector(target_points)
-        # 设置距离阈值，单位为米。用于特征匹配时的最大对应距离。
-        distance_threshold = 0.002
-        # 使用RANSAC基于FPFH特征进行点云配准
-        result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
-            source_pcd, target_pcd, source_fpfh, target_fpfh,
-            mutual_filter=True,
-            max_correspondence_distance=distance_threshold,  # 特征匹配的最大对应距离
-            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),  # 使用点到点的转换估计方法
-            ransac_n=3,  # RANSAC算法中使用的样本点数
-            checkers=[
-                o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),  # 基于边长的对应关系检查器
-                o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)  # 基于距离的对应关系检查器
-            ],
-            criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(40000, 500)  # RANSAC收敛准则
-        )
-        
-        # 返回匹配的fitness作为指标
-        return result.fitness
+
     
     def pca_adjust_calibration_nofpfh(self, source_cloud, target_cloud):
         # 将源点云和目标点云的点转换为NumPy数组
@@ -306,8 +266,51 @@ class PCARegistration:
         coarse_transformation[:3, 3] = t
         source_cloud.transform(coarse_transformation)
         return coarse_transformation, source_cloud, mse, signs
+    
+    def pca_adjust_calibration_dot_product(self, source_cloud, target_cloud):
+        # 将源点云和目标点云的点转换为NumPy数组
+        source_points = np.asarray(source_cloud.points)
+        target_points = np.asarray(target_cloud.points)
+        
+        # 计算源点云和目标点云的PCA特征向量和质心
+        source_eigenvectors, source_centroid = self.compute_pca(source_points) #先计算术前规划的点云pca主轴
+        target_eigenvectors, target_centroid = self.compute_pca(target_points)
 
+        # 调整源点云的第一和第二主方向使其与目标点云一致
+        if np.dot(source_eigenvectors[:, 0], target_eigenvectors[:, 0]) < 0:
+            source_eigenvectors[:, 0] = -source_eigenvectors[:, 0]
+        if np.dot(source_eigenvectors[:, 1], target_eigenvectors[:, 1]) < 0:
+            source_eigenvectors[:, 1] = -source_eigenvectors[:, 1]
 
+        # 用调整后的第一和第二主方向计算第三主方向
+        source_eigenvectors[:, 2] = np.cross(source_eigenvectors[:, 0], source_eigenvectors[:, 1])
+        target_eigenvectors[:, 2] = np.cross(target_eigenvectors[:, 0], target_eigenvectors[:, 1])
+
+        # 计算旋转矩阵和平移向量
+        R = np.dot(target_eigenvectors, source_eigenvectors.T)
+        t = target_centroid - np.dot(R, source_centroid)
+        
+        # 将源点云的点进行变换
+        transformed_source_points = self.transform_points(source_points, R, t)
+        
+        # 计算均方误差 (MSE)
+        mse = self.calculate_mse(transformed_source_points, target_points)
+        # 计算重叠率
+        overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
+        print(f"mse: {mse}, overlap: {overlap_ratio}")
+
+        # 创建并应用粗配准变换矩阵
+        coarse_transformation = np.eye(4)
+        coarse_transformation[:3, :3] = R
+        coarse_transformation[:3, 3] = t
+        source_cloud.transform(coarse_transformation)
+
+        # 可视化粗配准
+        visualize_initial_point_clouds(source_cloud, target_cloud, "coarse_registration")
+        
+        # 返回配准结果
+        return coarse_transformation, source_cloud, mse
+    
 
 
     #原始pca
@@ -334,74 +337,12 @@ class PCARegistration:
         coarse_transformation[:3, :3] = R
         coarse_transformation[:3, 3] = t
         source_cloud.transform(coarse_transformation)
+         # 可视化粗配准
+        visualize_initial_point_clouds(source_cloud, target_cloud, "ori_coarse_registration")
         return coarse_transformation, source_cloud
     
 
-    def pca_adjust_calibration(self, source_cloud, target_cloud):
-        # 将源点云和目标点云的点转换为NumPy数组
-        source_points = np.asarray(source_cloud.points)
-        target_points = np.asarray(target_cloud.points)
-        
-        # 计算源点云和目标点云的PCA特征向量和质心
-        source_eigenvectors, source_centroid = self.compute_pca(source_points)
-        target_eigenvectors, target_centroid = self.compute_pca(target_points)
-        # 计算源点云和目标点云的FPFH特征
-        source_fpfh = self.compute_fpfh_feature(source_points)
-        target_fpfh = self.compute_fpfh_feature(target_points)
 
-        # 初始化结果列表
-        initial_results = []
-
-        # 遍历所有 8 种可能的主轴方向组合
-        for i in range(8):
-            signs = [(-1 if i & (1 << bit) else 1) for bit in range(3)]  # 生成一个包含3个元素的列表，分别为-1或1
-            adjusted_source_eigenvectors = source_eigenvectors * signs  # 调整源点云的特征向量方向
-
-            # 计算旋转矩阵和平移向量
-            R = np.dot(target_eigenvectors, adjusted_source_eigenvectors.T)
-            t = target_centroid - np.dot(R, source_centroid)
-            
-            # 将源点云的点进行变换
-            transformed_source_points = self.transform_points(source_points, R, t)
-            # 计算均方误差 (MSE)
-            mse = self.calculate_mse(transformed_source_points, target_points)
-            # 计算重叠率
-            overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
-
-            # print(f"mse: {mse}, overlap: {overlap_ratio}")
-            initial_results.append((mse, overlap_ratio, R, t, tuple(signs)))
-
-        # 筛选出MSE最小或重叠率最大的结果
-        min_mse = min(result[0] for result in initial_results)
-        max_overlap_ratio = max(result[1] for result in initial_results)
-
-        filtered_results = [result for result in initial_results if result[0] == min_mse or result[1] == max_overlap_ratio]
-        
-        # 精细评估：基于FPFH匹配的fitness
-        best_result = None
-        best_fpfh_fitness = -1
-        i = 0
-        for mse, overlap_ratio, R, t, signs in filtered_results:
-            # 将源点云的点进行变换
-            transformed_source_points = self.transform_points(source_points, R, t)
-            # 计算变换后的源点云的FPFH特征
-            transformed_source_fpfh = self.compute_fpfh_feature(transformed_source_points)
-            # 计算FPFH匹配的fitness
-            fpfh_fitness = self.match_fpfh(transformed_source_points, target_points, transformed_source_fpfh, target_fpfh)
-            print(f"{i}:FPFH fitness: {fpfh_fitness}, signs: {signs}")
-            i += 1
-            # 如果当前的FPFH匹配fitness更好，则更新最佳结果
-            if fpfh_fitness > best_fpfh_fitness:
-                best_fpfh_fitness = fpfh_fitness
-                best_result = (mse, overlap_ratio, R, t, signs)
-
-
-        mse, overlap_ratio, R, t, signs = best_result
-        coarse_transformation = np.eye(4)
-        coarse_transformation[:3, :3] = R
-        coarse_transformation[:3, 3] = t
-        source_cloud.transform(coarse_transformation)
-        return coarse_transformation, source_cloud, mse, signs
     
     
 
@@ -495,6 +436,7 @@ class ICPRegistration:
         fitness, inlier_rmse = evaluate_registration(source, target, transformation_icp, threshold)
 
         source.transform(transformation_icp)
+        visualize_initial_point_clouds(source, target, "icp_registration")
        
         return transformation_icp, fitness, inlier_rmse
  
