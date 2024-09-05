@@ -26,7 +26,7 @@ class ImageSubscriber(Node):
         self.color_sub = message_filters.Subscriber(self, Image, '/camera/camera/color/image_rect_raw')
         self.depth_sub = message_filters.Subscriber(self, Image, '/camera/camera/aligned_depth_to_color/image_raw')
         self.lowon_publisher = self.create_publisher(PointCloud2, 'lowfront_point_cloud', 10)
-        self.lowoff_publisher = self.create_publisher(PointCloud2, 'lowoff_point_cloud', 10)
+        self.lowon3_publisher = self.create_publisher(PointCloud2, 'lowfront_pca_adjust', 10)
         self.combined_publisher = self.create_publisher(PointCloud2, 'combined_point_cloud', 10)  
         self.roi_publisher = self.create_publisher(PointCloud2, 'roi_point_cloud', 10)
         self.processed_image_publisher = self.create_publisher(Image, 'processed_image', 10)
@@ -52,7 +52,7 @@ class ImageSubscriber(Node):
         # self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
-        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0802.pt") #yolov8在本地训练的实例分割模型
+        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0905.pt") #yolov8在本地训练的实例分割模型
         
     def save_images(self):
         if self.latest_color_image is not None and self.latest_depth_image is not None:
@@ -103,8 +103,9 @@ class ImageSubscriber(Node):
 ############################################################### yolo实例分割################3#########################################
         # 使用模型对最新的彩色图像进行预测，得到检测结果
         yolo_results = self.model.predict(self.latest_color_image)
-        # 如果不想进行预测，可以将结果设为 None
+        ############!!!!!!!!!!!!!!!! 如果不想进行预测，可以将结果设为 None,只用于图像收集
         # yolo_results = None
+
         if yolo_results:
             for res in yolo_results:
                 # 对每一个结果进行进一步处理
@@ -208,28 +209,13 @@ class ImageSubscriber(Node):
                             points_by_class[cls_idx].append([x, y, z, rgb])  # 添加到对应类别的点云
                                
                 self.create_pointcloud2_msg(points_edge, cls_idx)
-        # 检查是否同时包含类别 0 和 1
-        if 0 in detected_classes and 1 in detected_classes:
-            # 合并类别 0 和 1 的点云数据到 self.points_combined
-            self.points_combined.extend(points_by_class[0])
-            self.points_combined.extend(points_by_class[1])    
+        # 检查是否同时包含类别 0 和 1(目前不采用牙龈边缘，需要的时候在打开)
+        # if 0 in detected_classes and 1 in detected_classes:
+        #     # 合并类别 0 和 1 的点云数据到 self.points_combined
+        #     self.points_combined.extend(points_by_class[0])
+        #     self.points_combined.extend(points_by_class[1])    
                 
-                ############################## 裁剪感兴趣区域点云，用于可视化验证 ###############################################
-                # for v in range(start_y, end_y):
-                #     for u in range(start_x, end_x):
-                #         depth = self.latest_depth_image[v, u]
-                #         if depth > 0:  # 简单的深度滤波，移除深度值为0的点
-                #             # 这里的内参需要根据实际相机调整
-                #             z = depth * 0.001  # scale depth to meters
-                #             x = (u - self.cx) * z / self.fx
-                #             y = (v - self.cy) * z / self.fy
-                #             b, g, r = self.latest_color_image[v, u].astype(np.uint8)
-                #             # print("BGR values:", b, g, r)  # 直接打印看是否有异常
-                #             rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
-                #             rgb = struct.unpack('I', rgb)[0]
-                #             points_roi.append([x, y, z, rgb])
-                # val_idx = 7           
-                # self.create_pointcloud2_msg(points_roi, val_idx)
+
 
     def edge_extration(self, x1, y1, x2, y2, b_mask, iso_crop):
         ############################################## 牙齿轮廓提取 #####################################################
@@ -335,8 +321,8 @@ class ImageSubscriber(Node):
             self.lowon_publisher.publish(point_cloud_msg)
             print("lowon Cloud published")
         elif(idx == 1):
-            self.lowoff_publisher.publish(point_cloud_msg)
-            print("lowoff Cloud published")
+            self.lowon3_publisher.publish(point_cloud_msg)
+            print("lowon3  pca adjust Cloud published")
         elif(idx == 7):
             self.roi_publisher.publish(point_cloud_msg)
             print("roi Point Cloud published")

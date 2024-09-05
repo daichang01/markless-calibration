@@ -13,6 +13,8 @@ class PointCloudRegistration(Node):
         # self.timer = self.create_timer(1, self.timer_callback)
         # 只有上边缘
         self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
+        # 用于pca校正的三个牙齿边缘
+        self.lowpca_sub = self.create_subscription(PointCloud2, '/lowfront_pca_adjust', self.lowpca_callback, 10)
         # 利用上边缘和牙龈
         # self.combined_sub = self.create_subscription(PointCloud2, '/combined_point_cloud', self.lowfront_callback, 10)
         
@@ -23,6 +25,7 @@ class PointCloudRegistration(Node):
         # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up6down2 - Cloud.txt"
         # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/updown5.txt"
         
+        self.source_path2 = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up3.txt"
         # 口扫点云验证
         # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/frontval_downsample.txt"
 
@@ -69,6 +72,7 @@ class PointCloudRegistration(Node):
         self.source = load_point_cloud(self.source_path)
         self.rvizpcd = load_point_cloud(self.valsource_path)
         self.pointsval=  load_point_cloud(self.valpoints_path)
+        self.source2 = load_point_cloud(self.source_path2)
         
         # 可视化预处理后的点云
         visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
@@ -76,12 +80,12 @@ class PointCloudRegistration(Node):
         start_time_pca = time.time()
         # 带调整主轴方向的pca
         #法一：根据重叠率调整主轴方向
-        # coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = self.pca_registrator.pca_adjust_calibration_nofpfh(self.source, self.target)
-        #法二： 
+        coarse_transformation, transformed_source_cloud, best_mse, best_frequent_combination = self.pca_registrator.pca_adjust_calibration_nofpfh(self.source, self.target,self.source2,self.target_pca_copy)
+        #法二： 只调整两个主轴
         # coarse_transformation, transformed_source_cloud, best_mse= self.pca_registrator.pca_adjust_calibration_dot_product(self.source, self.target)
         
         # 法三 原始pca
-        coarse_transformation, transformed_source_cloud = self.pca_registrator.pca_calibration(self.source, self.target)
+        # coarse_transformation, transformed_source_cloud = self.pca_registrator.pca_calibration(self.source, self.target)
         end_time_pca = time.time()
 
         pca_time = end_time_pca - start_time_pca
@@ -142,6 +146,20 @@ class PointCloudRegistration(Node):
         self.publish_point_cloud(self.pub_trans, self.rvizpcd)
         self.publish_point_cloud(self.pub_point, self.pointsval)
         print("publish trans scan point cloud !")
+
+    def lowpca_callback(self, msg):
+        self.target_pca = pointcloud2_to_open3d(msg)
+        if self.target_pca is None or len(self.target_pca.points) == 0:
+            self.get_logger().info("Received empty target_pca  point cloud, skipping registration")
+            return
+        self.get_logger().info(f"Received new target point cloud with {len(self.target_pca.points)} points)")
+        # 去除离群值
+        original_num_points = len(self.target_pca.points)
+        self.target_pca, ind = self.target_pca.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.5)
+        filtered_num_points = len(self.target_pca.points)
+        num_outliers = original_num_points - filtered_num_points
+        self.get_logger().info(f"pca_target Removed {num_outliers} outliers")
+        self.target_pca_copy = self.target_pca
         
     def timer_callback(self):
         self.publish_point_cloud(self.pub_ori, self.rvizsource)
@@ -216,7 +234,7 @@ class PCARegistration:
 
 
     
-    def pca_adjust_calibration_nofpfh(self, source_cloud, target_cloud):
+    def pca_adjust_calibration_nofpfh(self, source_cloud, target_cloud, source_pca, target_pca):
         # 将源点云和目标点云的点转换为NumPy数组
         source_points = np.asarray(source_cloud.points)
         target_points = np.asarray(target_cloud.points)
@@ -228,7 +246,7 @@ class PCARegistration:
         # 初始化结果列表
         initial_results = []
 
-        # 遍历所有 8 种可能的主轴方向组合
+        # 遍历所有 8 种可能的主轴方向组合 
         for i in range(8):
             signs = [(-1 if i & (1 << bit) else 1) for bit in range(3)]  # 生成一个包含3个元素的列表，分别为-1或1
             adjusted_source_eigenvectors = source_eigenvectors * signs  # 调整源点云的特征向量方向
@@ -238,11 +256,13 @@ class PCARegistration:
             t = target_centroid - np.dot(R, source_centroid)
             
             # 将源点云的点进行变换
-            transformed_source_points = self.transform_points(source_points, R, t)
+            transformed_source_points = self.transform_points(source_pca, R, t)
             # 计算均方误差 (MSE)
-            mse = self.calculate_mse(transformed_source_points, target_points)
+            mse = self.calculate_mse(transformed_source_points, target_pca)
             # 计算重叠率
-            overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
+            # overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
+            # 改为用pca_target作校正
+            overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_pca)
             print(f"combine: {i}, mse: {mse}, overlap: {overlap_ratio}")
 
             # 添加到结果列表中
