@@ -75,7 +75,7 @@ class PointCloudRegistration(Node):
         self.source2 = load_point_cloud(self.source_path2)
         
         # 可视化预处理后的点云
-        visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
+        # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
     ####################  pca粗配准  ##########################################################
         start_time_pca = time.time()
         # 带调整主轴方向的pca
@@ -238,6 +238,8 @@ class PCARegistration:
         # 将源点云和目标点云的点转换为NumPy数组
         source_points = np.asarray(source_cloud.points)
         target_points = np.asarray(target_cloud.points)
+        source_pca_points = np.asarray(source_pca.points)
+        target_pca_points = np.asarray(target_pca.points)
         
         # 计算源点云和目标点云的PCA特征向量和质心
         source_eigenvectors, source_centroid = self.compute_pca(source_points)
@@ -256,13 +258,13 @@ class PCARegistration:
             t = target_centroid - np.dot(R, source_centroid)
             
             # 将源点云的点进行变换
-            transformed_source_points = self.transform_points(source_pca, R, t)
+            transformed_source_points = self.transform_points(source_pca_points, R, t)
             # 计算均方误差 (MSE)
-            mse = self.calculate_mse(transformed_source_points, target_pca)
+            mse = self.calculate_mse(transformed_source_points, target_pca_points)
             # 计算重叠率
             # overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
             # 改为用pca_target作校正
-            overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_pca)
+            overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_pca_points)
             print(f"combine: {i}, mse: {mse}, overlap: {overlap_ratio}")
 
             # 添加到结果列表中
@@ -277,7 +279,9 @@ class PCARegistration:
             best_result = min_mse_result
         else:
             # 如果不是同一个，选择重叠率最大的那个
-            best_result = max_overlap_result
+            # best_result = max_overlap_result
+            # 如果不是同一个，选择均方误差最小的那个
+            best_result = min_mse_result
 
         mse, overlap_ratio, R, t, signs, i = best_result
         print(f"select: {i}, mse: {mse}, overlap: {overlap_ratio},signs: {signs}")
@@ -326,7 +330,7 @@ class PCARegistration:
         source_cloud.transform(coarse_transformation)
 
         # 可视化粗配准
-        visualize_initial_point_clouds(source_cloud, target_cloud, "coarse_registration")
+        # visualize_initial_point_clouds(source_cloud, target_cloud, "coarse_registration")
         
         # 返回配准结果
         return coarse_transformation, source_cloud, mse
@@ -358,7 +362,7 @@ class PCARegistration:
         coarse_transformation[:3, 3] = t
         source_cloud.transform(coarse_transformation)
          # 可视化粗配准
-        visualize_initial_point_clouds(source_cloud, target_cloud, "ori_coarse_registration")
+        # visualize_initial_point_clouds(source_cloud, target_cloud, "ori_coarse_registration")
         return coarse_transformation, source_cloud
     
 
@@ -456,7 +460,7 @@ class ICPRegistration:
         fitness, inlier_rmse = evaluate_registration(source, target, transformation_icp, threshold)
 
         source.transform(transformation_icp)
-        visualize_initial_point_clouds(source, target, "icp_registration")
+        # visualize_initial_point_clouds(source, target, "icp_registration")
        
         return transformation_icp, fitness, inlier_rmse
  

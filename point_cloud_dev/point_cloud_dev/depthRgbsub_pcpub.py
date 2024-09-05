@@ -119,35 +119,58 @@ class ImageSubscriber(Node):
     def process_oneres(self, r):
         detected_classes = set()
         points_by_class = {0: [], 1:[]}
+        # https://docs.ultralytics.com/zh/guides/isolating-segmentation-objects/#recipe-walk-through
+        # https://docs.ultralytics.com/modes/predict/#working-with-results
         img = np.copy(r.orig_img)
         img_name = Path(r.path).stem
 
-        # 遍历每个结果中的对象，这些对象可能代表不同的检测到的实体
-        for ci, c in enumerate(r):
+        sorted_results = sorted(r, key=lambda c: 0 if int(c.boxes.cls[0]) == 1 else 1)
+
+        # 创建一个与原图大小相同的黑色掩码，用于存储所有检测到的对象
+        combined_mask = np.zeros(img.shape[:2], np.uint8)
+        
+        # 遍历每个结果中的对象，这些对象可能代表不同的检测到的实体,这里c就是r
+        for ci, c in enumerate(sorted_results):
+            img_tmp = img.copy()
             # 获取检测到的对象的标签名称
             # label = c.names[c.boxes.cls.tolist().pop()]
             cls_idx = int(c.boxes.cls[0])  # 获取类别索引
+            # cls = c.boxes.cls
+            # print(f"Detected class: {cls}")
             detected_classes.add(cls_idx)  # 添加类别到集合
 
             if cls_idx in points_by_class:
+            # if cls_idx == 0:
 
                 label = c.names[cls_idx]  # 使用索引获取标签名称
 
                 # 创建一个与原图大小相同的黑色掩码
-                b_mask = np.zeros(img.shape[:2], np.uint8)
+                b_mask = np.zeros(img_tmp.shape[:2], np.uint8)
+                print(f"masks:{c.masks}")
                 # 从检测对象中提取轮廓并转换为整数坐标
-                contour = c.masks.xy.pop()
-                contour = contour.astype(np.int32)
-                contour = contour.reshape(-1, 1, 2) #符合 OpenCV cv2.drawContours 函数的要求
-                _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+                # contour = c.masks.xy.pop()
+                for contour in c.masks.xy:
+                    # 这些值被转入 np.int32 以兼容 drawContours() 函数。
+                    contour = contour.astype(np.int32)
+                    #符合 OpenCV cv2.drawContours 函数的要求
+                    contour = contour.reshape(-1, 1, 2) 
+                    # 在蒙版上绘制轮廓
+                    _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+                            # 将当前类别的掩码与整体掩码结合，保留所有类别的区域
+                combined_mask = cv2.bitwise_or(combined_mask, b_mask)
                 # 将单通道的黑白掩码转换为三通道格式
-                mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+                mask3ch = cv2.cvtColor(combined_mask, cv2.COLOR_GRAY2BGR)
                 # 结果是原图中只有与掩码白色区域相对应的部分被保留，其余部分因为与黑色（0）的与操作而变为黑色。
-                isolated = cv2.bitwise_and(mask3ch, img)
-                #  Bounding box coordinates
+                # # 使用二进制掩码隔离对象
+                isolated = cv2.bitwise_and(mask3ch, img_tmp)
+
+                # cv2.namedWindow(f"isolated", cv2.WINDOW_NORMAL)
+                # cv2.imshow(f"isolated", isolated)
+                # cv2.waitKey(5)
+                #  边界框坐标
                 x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
                 print(f"{cls_idx}_{label}: {x1, y1, x2, y2}")
-                # 得到感兴趣区域
+                # 将图像裁剪到对象区域
                 iso_crop = isolated[y1:y2, x1:x2]
 
                 # cv2.namedWindow(f"{cls_idx}_{label}", cv2.WINDOW_NORMAL)
@@ -155,7 +178,7 @@ class ImageSubscriber(Node):
                 # cv2.waitKey(5)
 
                 ############################################## 牙齿轮廓提取 #####################################################
-                contours, large_contours, interpolated_contours = self.edge_extration(x1, y1, x2, y2, b_mask, iso_crop)
+                contours, large_contours, interpolated_contours = self.edge_extration(x1, y1, x2, y2, combined_mask, iso_crop)
                 
                 # 选择面积最大的轮廓绘制
                 if contours:
