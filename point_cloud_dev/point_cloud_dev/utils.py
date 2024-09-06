@@ -8,8 +8,39 @@ from std_msgs.msg import Header
 from sensor_msgs.msg import PointCloud2, PointField
 import sensor_msgs_py.point_cloud2 as pc2
 from scipy.interpolate import interp1d, splprep, splev
+from scipy.spatial import cKDTree
+import pyrealsense2 as rs
+
 
 ############################################## utils ##############################################
+def getintrinsic():
+    # 设置和获取内参
+    pipeline = rs.pipeline()
+    config = rs.config()
+    # config.enable_device('你的设备ID')  # 如有必要
+    # config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
+    # config.enable_stream(rs.stream.color, 848, 480, rs.format.bgr8, 30)
+    config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+    config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
+
+    # 启动管道并获取内参
+    profile = pipeline.start(config)
+    depth_sensor = profile.get_device().first_depth_sensor()
+    depth_scale = depth_sensor.get_depth_scale()
+
+    # 获取内参
+    intrinsics = profile.get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
+    fx = intrinsics.fx  # x轴焦距
+    fy = intrinsics.fy  # y轴焦距
+    cx = intrinsics.ppx  # x轴光学中心
+    cy = intrinsics.ppy  # y轴光学中心
+    print(f"fx: {fx}, fy: {fy}, cx: {cx}, cy: {cy}")
+
+    # 在点云生成中使用这些内参
+    # x = (u - cx) * z / fx
+    # y = (v - cy) * z / fy
+
+
 def visualize_initial_point_clouds(pc1, pc2, window_name='untitle', width=1000, height=800):
     # Set colors for point clouds
     pc1.paint_uniform_color([1, 0, 0])  # red color for the first point cloud
@@ -70,7 +101,31 @@ def pointcloud2_to_open3d(pointcloud2_msg):
     point_cloud.points = o3d.utility.Vector3dVector(points)
     return point_cloud
 
-def evaluate_registration(source, target, transformation, threshold):
+
+def calculate_mse(source_points, target_points):
+        # 使用 float64 确保高精度计算
+    source_points = np.asarray(source_points, dtype=np.float64)
+    target_points = np.asarray(target_points, dtype=np.float64)
+    # 创建目标点云的KD树
+    tree = cKDTree(target_points)
+    # 查询源点云中每个点在目标点云中的最近邻点
+    distances, indices = tree.query(source_points, k=1)
+    # 找到每个源点云点对应的最近的目标点云点
+    nearest_target_points = target_points[indices]
+    # 计算源点云和最近的目标点云点之间的均方误差 (MSE)
+    return np.mean((source_points - nearest_target_points)**2)
+
+def calculate_overlap_ratio(source_points, target_points, threshold=0.001):
+    # 创建目标点云的KD树
+    tree = cKDTree(target_points)
+    # 查询源点云中每个点在目标点云中的最近邻点的距离
+    distances, _ = tree.query(source_points, k=1)
+    # 计算源点云中距离目标点云最近点距离小于阈值的点的数量
+    overlap_count = np.sum(distances < threshold)
+    # 计算重叠率，即重叠点的数量除以源点云的总点数
+    return overlap_count / len(source_points)
+def evaluate_registration(source, target, transformation, threshold= 0.02):
+    # https://www.open3d.org/docs/latest/python_api/open3d.pipelines.registration.RegistrationResult.html
     evaluation = o3d.pipelines.registration.evaluate_registration(
         source, target,max_correspondence_distance= threshold, transformation= transformation)
     fitness = evaluation.fitness # 重叠区域（内部对应数/源中的点数）。越高越好。
@@ -145,7 +200,9 @@ def linear_interpolation(pcd, num_points):
     
     return interpolated_pcd
 
-
+def transform_points(points, R, t):
+    transformed_points = np.dot(points, R.T) + t
+    return transformed_points
 
 def spline_interpolation(pcd, num_points):
     """

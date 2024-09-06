@@ -146,7 +146,7 @@ class ImageSubscriber(Node):
 
                 # 创建一个与原图大小相同的黑色掩码
                 b_mask = np.zeros(img_tmp.shape[:2], np.uint8)
-                print(f"masks:{c.masks}")
+                # print(f"masks:{c.masks}")
                 # 从检测对象中提取轮廓并转换为整数坐标
                 # contour = c.masks.xy.pop()
                 for contour in c.masks.xy:
