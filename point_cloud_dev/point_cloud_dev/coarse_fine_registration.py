@@ -51,7 +51,7 @@ class PointCloudRegistration(Node):
         self.computed_combination = True
         self.kalman_filter = KalmanFilter(state_dim=16, measurement_dim=16)
 
-################################################ lowfront  registration pipeline #############################################
+################################################  Registration Pipeline #############################################
     def lowfront_callback(self, msg):
         self.target = pointcloud2_to_open3d(msg)
         if self.target is None or len(self.target.points) == 0:
@@ -66,6 +66,9 @@ class PointCloudRegistration(Node):
         self.get_logger().info(f"Removed {num_outliers} outliers")
         self.publish_point_cloud(self.pub_target, self.target)
 
+        # 将目标点云保存为TXT文件
+        save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/preprocess/precloud", self.target)
+
         # open3d格式
         self.source = load_point_cloud(self.source_path)
         self.rvizpcd = load_point_cloud(self.valsource_path)
@@ -73,8 +76,8 @@ class PointCloudRegistration(Node):
         self.source2 = load_point_cloud(self.source_path2)
         
         # 可视化预处理后的点云
-        # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
-    ####################  pca粗配准  ##########################################################
+        visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
+    ####################  pca粗配准  ##########
         start_time_pca = time.time()
         # 带调整主轴方向的pca
         #法一：根据重叠率调整主轴方向
@@ -83,10 +86,8 @@ class PointCloudRegistration(Node):
             print("No valid transformation found, skipping further processing")
             return
         coarse_transformation, transformed_source_cloud, mse, overlap_ratio = coarse_result
-        #法二： 只调整两个主轴
-        # coarse_transformation, transformed_source_cloud, best_mse= self.pca_registrator.pca_adjust_calibration_dot_product(self.source, self.target)
         
-        # 法三 原始pca
+        # 法二：原始pca
         # coarse_transformation, transformed_source_cloud = self.pca_registrator.pca_calibration(self.source, self.target)
         end_time_pca = time.time()
 
@@ -100,37 +101,57 @@ class PointCloudRegistration(Node):
         # print(f"Best Axis Flip Combination: {best_frequent_combination}")
         print(f"pca粗配准共计耗时: {pca_time} 秒")
 
-        ####################  曲线ICP精配准  ##########################################################
+        # 将目标点云保存为TXT文件
+        save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/coarse/coarse", transformed_source_cloud)        
+        # 可视化粗配准后的点云
+        visualize_initial_point_clouds(self.source,  self.target, window_name='coarse_registration')
 
-        # start_time_icp = time.time()
-        # fine_transformation, fitness, inlier_rmse, num_valid_pairs = self.curve_icp_registrator.icp_fine_registration \
-        #     (transformed_source_cloud, self.target)
-        # end_time_icp = time.time()
-        # icp_time = end_time_icp - start_time_icp
-        # print("曲线ICP精配准后的变换矩阵：")
-        # print(f"{fine_transformation}")
-        # print("曲线ICP精配准后的评估结果：")
-        # print(f"RMSE: {inlier_rmse}")
-        # print(f"Fitness: {fitness}")
-        # print(f"曲线ICP精配准耗时: {icp_time} 秒")
 
-    ####################  icp精配准  ##########################################################
+    ####################  icp精配准  ##################
 
         start_time_icp = time.time()
-        fine_transformation, overlap_ratio, mse = self.icp_registrator.icp_fine_registration \
-            (transformed_source_cloud, self.target, self.threshold)
+        #法一：传统icp
+        fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration \
+            (transformed_source_cloud, self.target)
+        #法二：曲线icp
+        # fine_transformation, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_curve \
+        #     (transformed_source_cloud, self.target)
+        #法三：iss icp
+        # fine_transformation, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_iss \
+        #     (transformed_source_cloud, self.target)
+        #法四：软分配
+        # fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_with_soft_assignments \
+        #     (transformed_source_cloud, self.target)
         end_time_icp = time.time()
         icp_time = end_time_icp - start_time_icp
-        print("精配准后的变换矩阵：")
-        print(f"{fine_transformation}")
-        print("精配准后的评估结果：")
-        print(f"MSE: {mse}")
-        print(f"overlap_ratio: {overlap_ratio}")
-        print(f"icp精配准耗时: {icp_time} 秒")
+        print(f"icp精配准后的变换矩阵：{fine_transformation}")
+ 
+        print(f"icp MSE: {mse}")
+        print(f"icp overlap_ratio: {overlap_ratio}")
+        print(f"icp精配准耗时: {icp_time} 秒,有效点对数量: {num_valid_pairs}")
 
-    #############粗配准 + 精配准  ##########################################################    
+        start_time_soft = time.time()
+        #法四：软分配
+        fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_with_soft_assignments \
+            (transformed_source_cloud, self.target)
+        end_time_soft = time.time()
+        ic_time_soft = end_time_soft - start_time_soft
+        print(f"icp 软分配精配准后的变换矩阵：{fine_transformation}")
+ 
+        print(f"icp 软分配MSE: {mse}")
+        print(f"icp 软分配overlap_ratio: {overlap_ratio}")
+        print(f"icp软分配精配准耗时: {ic_time_soft} 秒,有效点对数量: {num_valid_pairs}")
+
+
         combined_transformation = np.dot(fine_transformation, coarse_transformation) 
+        # combined_transformation = np.dot(curve_fine_transformation, coarse_transformation)
         print(f"总变换矩阵:{combined_transformation}")
+
+
+        # 将目标点云保存为TXT文件
+        save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/fine/fine", fine_transformed_source)        
+        # 可视化精配准后的点云
+        visualize_initial_point_clouds(self.source,  self.target, window_name='fine_registration')
 
         # 使用卡尔曼滤波进行平滑（未采用）
         # combined_transformation_flat = combined_transformation.flatten()
@@ -146,7 +167,7 @@ class PointCloudRegistration(Node):
         x_prime, y_prime, z_prime = point_cam[:3, 0]
 
         # 打印结果
-        print(f"Point1 in camera coordinate system: ({x_prime}, {y_prime}, {z_prime})")
+        print(f"Point1 in camera coor dinate system: ({x_prime}, {y_prime}, {z_prime})")
         # self.rvizpcd.transform(coarse_transformation) # 只进行粗配准
         self.publish_point_cloud(self.pub_trans, self.rvizpcd)
         self.publish_point_cloud(self.pub_point, self.pointsval)

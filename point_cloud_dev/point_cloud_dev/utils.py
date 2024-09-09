@@ -10,6 +10,8 @@ import sensor_msgs_py.point_cloud2 as pc2
 from scipy.interpolate import interp1d, splprep, splev
 from scipy.spatial import cKDTree
 import pyrealsense2 as rs
+from datetime import datetime
+import os
 
 
 ############################################## utils ##############################################
@@ -248,3 +250,15 @@ def spline_interpolation(pcd, num_points):
 
     return interpolated_pcd
 
+def save_point_cloud_to_txt(filepath, point_cloud):
+    current_time = datetime.now().strftime("%m%d_%H%M%S")
+    save_path= f"{filepath}_{current_time}.txt"
+
+    # # 检查路径中的目录是否存在，不存在则创建
+    # if not os.path.exists(save_path):
+    #     os.makedirs(save_path)
+    # 将点云保存为TXT文件格式
+    with open(save_path, 'w') as f:
+        for point in point_cloud.points:
+            f.write(f"{point[0]} {point[1]} {point[2]}\n")
+    print(f"Point cloud saved to {save_path}")
