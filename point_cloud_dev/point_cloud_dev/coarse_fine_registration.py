@@ -29,9 +29,9 @@ class PointCloudRegistration(Node):
         
         self.source_path2 = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up3.txt"
         # 口扫点云验证
-        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/frontval_downsample.txt"
+        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/teethrealon-down.txt"
 
-        self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/halfval.txt"
+        # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/halfval.txt"
         
         # self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/teethreal_downsample.txt"
 
@@ -47,9 +47,6 @@ class PointCloudRegistration(Node):
         self.pca_registrator = PCARegistration()
         self.icp_registrator = ICPRegistration()
 
-        self.best_combination = None
-        self.computed_combination = True
-        self.kalman_filter = KalmanFilter(state_dim=16, measurement_dim=16)
 
 ################################################  Registration Pipeline #############################################
     def lowfront_callback(self, msg):
@@ -66,17 +63,16 @@ class PointCloudRegistration(Node):
         self.get_logger().info(f"Removed {num_outliers} outliers")
         self.publish_point_cloud(self.pub_target, self.target)
 
-        # 将目标点云保存为TXT文件
-        save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/preprocess/precloud", self.target)
-
         # open3d格式
         self.source = load_point_cloud(self.source_path)
         self.rvizpcd = load_point_cloud(self.valsource_path)
         self.pointsval=  load_point_cloud(self.valpoints_path)
         self.source2 = load_point_cloud(self.source_path2)
-        
+
+        # 将目标点云保存为TXT文件
+        # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/preprocess/precloud", self.target)
         # 可视化预处理后的点云
-        visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
+        # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
     ####################  pca粗配准  ##########
         start_time_pca = time.time()
         # 带调整主轴方向的pca
@@ -85,7 +81,7 @@ class PointCloudRegistration(Node):
         if coarse_result is None:
             print("No valid transformation found, skipping further processing")
             return
-        coarse_transformation, transformed_source_cloud, mse, overlap_ratio = coarse_result
+        coarse_transformation, transformed_source_cloud, rmse, overlap_ratio = coarse_result
         
         # 法二：原始pca
         # coarse_transformation, transformed_source_cloud = self.pca_registrator.pca_calibration(self.source, self.target)
@@ -95,52 +91,74 @@ class PointCloudRegistration(Node):
         print("PCA粗配准后的变换矩阵：")
         print(f"{coarse_transformation}")
         print("PCA粗配准后的评估结果：")
-        print(f"MSE: {mse}")
-        print(f"overlap_ratio: {overlap_ratio}")
+        print(f"pca RMSE: {rmse}")
+        print(f"pca overlap_ratio: {overlap_ratio}")
 
         # print(f"Best Axis Flip Combination: {best_frequent_combination}")
         print(f"pca粗配准共计耗时: {pca_time} 秒")
 
         # 将目标点云保存为TXT文件
-        save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/coarse/coarse", transformed_source_cloud)        
+        # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/coarse/coarse", transformed_source_cloud)        
         # 可视化粗配准后的点云
-        visualize_initial_point_clouds(self.source,  self.target, window_name='coarse_registration')
+        # visualize_initial_point_clouds(self.source,  self.target, window_name='coarse_registration')
 
 
     ####################  icp精配准  ##################
+        print("11111111111111111111111111111")
+        start_time_icp_tra = time.time()
+        #法一：传统icp
+        fine_transformation, fine_transformed_source, overlap_ratio, rmse, num_valid_pairs = self.icp_registrator.icp_fine_registration \
+            (transformed_source_cloud, self.target)
 
+        end_time_icp_tra = time.time()
+        icp_time_tra = end_time_icp_tra - start_time_icp_tra
+        # print(f"icp 精配准后的变换矩阵：{fine_transformation}")
+        print(f"icp RMSE: {rmse}")
+        print(f"icp overlap_ratio: {overlap_ratio}")
+        print(f"icp精配准耗时: {icp_time_tra} 秒,有效点对数量: {num_valid_pairs}")
+
+
+        print("22222222222222222222222222222")
         start_time_icp = time.time()
         #法一：传统icp
-        fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration \
-            (transformed_source_cloud, self.target)
+        # fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration \
+        #     (transformed_source_cloud, self.target)
         #法二：曲线icp
         # fine_transformation, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_curve \
         #     (transformed_source_cloud, self.target)
-        #法三：iss icp
-        # fine_transformation, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_iss \
-        #     (transformed_source_cloud, self.target)
-        #法四：软分配
-        # fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_with_soft_assignments \
-        #     (transformed_source_cloud, self.target)
+        #法三：软分配
+        fine_transformation, fine_transformed_source, overlap_ratio, rmse, num_valid_pairs = self.icp_registrator.icp_fine_registration_with_soft_assignments \
+            (transformed_source_cloud, self.target)
+
         end_time_icp = time.time()
         icp_time = end_time_icp - start_time_icp
-        print(f"icp精配准后的变换矩阵：{fine_transformation}")
- 
-        print(f"icp MSE: {mse}")
-        print(f"icp overlap_ratio: {overlap_ratio}")
-        print(f"icp精配准耗时: {icp_time} 秒,有效点对数量: {num_valid_pairs}")
+        # print(f"icp soft精配准后的变换矩阵：{fine_transformation}")
+        print(f"icp soft RMSE: {rmse}")
+        print(f"icp soft overlap_ratio: {overlap_ratio}")
+        print(f"icp soft 精配准耗时: {icp_time} 秒,有效点对数量: {num_valid_pairs}")
 
-        start_time_soft = time.time()
-        #法四：软分配
-        fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_with_soft_assignments \
+        print("333333333333333333333333333333")
+        start_time_cauchy = time.time()
+        #法一：传统icp
+        # fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration \
+        #     (transformed_source_cloud, self.target)
+        #法二：曲线icp
+        # fine_transformation, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_curve \
+        #     (transformed_source_cloud, self.target)
+        #法三：new
+        fine_transformation, fine_transformed_source, overlap_ratio, rmse, num_valid_pairs = self.icp_registrator.icp_fine_registration_with_adaptive_weights \
             (transformed_source_cloud, self.target)
-        end_time_soft = time.time()
-        ic_time_soft = end_time_soft - start_time_soft
-        print(f"icp 软分配精配准后的变换矩阵：{fine_transformation}")
- 
-        print(f"icp 软分配MSE: {mse}")
-        print(f"icp 软分配overlap_ratio: {overlap_ratio}")
-        print(f"icp软分配精配准耗时: {ic_time_soft} 秒,有效点对数量: {num_valid_pairs}")
+
+        end_time_cauchy = time.time()
+        icp_time = end_time_cauchy - start_time_cauchy
+        # print(f"icp soft精配准后的变换矩阵：{fine_transformation}")
+        print(f"icp cauchy RMSE: {rmse}")
+        print(f"icp cauchy overlap_ratio: {overlap_ratio}")
+        print(f"icp cauchy 精配准耗时: {icp_time} 秒,有效点对数量: {num_valid_pairs}")
+
+
+
+
 
 
         combined_transformation = np.dot(fine_transformation, coarse_transformation) 
@@ -149,16 +167,11 @@ class PointCloudRegistration(Node):
 
 
         # 将目标点云保存为TXT文件
-        save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/fine/fine", fine_transformed_source)        
+        # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/fine/fine", fine_transformed_source)        
         # 可视化精配准后的点云
-        visualize_initial_point_clouds(self.source,  self.target, window_name='fine_registration')
+        # visualize_initial_point_clouds(self.source,  self.target, window_name='fine_registration')
 
-        # 使用卡尔曼滤波进行平滑（未采用）
-        # combined_transformation_flat = combined_transformation.flatten()
-        # self.kalman_filter.update(combined_transformation_flat)
-        # smoothed_transformation_flat = self.kalman_filter.get_state().reshape((4, 4))
 
-        # self.rvizpcd.transform(smoothed_transformation_flat) #粗配准 + 精配准 + 卡尔曼滤波
         self.rvizpcd.transform(combined_transformation) #粗配准 + 精配准
         self.pointsval.transform(combined_transformation)
         # 计算变换后的点在相机坐标系中的位置
@@ -198,35 +211,6 @@ class PointCloudRegistration(Node):
 
     
 
-
-
-
- #不一定会用
-class KalmanFilter:
-    def __init__(self, state_dim, measurement_dim):
-        self.state_dim = state_dim
-        self.measurement_dim = measurement_dim
-        self.A = np.eye(state_dim)
-        self.H = np.eye(state_dim)
-        self.Q = np.eye(state_dim) * 0.01
-        self.R = np.eye(state_dim) * 0.1
-        self.P = np.eye(state_dim)
-        self.x = np.zeros(state_dim)
-
-    def update(self, z):
-        # Prediction step
-        x_pred = np.dot(self.A, self.x)
-        P_pred = np.dot(np.dot(self.A, self.P), self.A.T) + self.Q
-
-        # Update step
-        y = z - np.dot(self.H, x_pred)
-        S = np.dot(np.dot(self.H, P_pred), self.H.T) + self.R
-        K = np.dot(np.dot(P_pred, self.H.T), np.linalg.inv(S))
-        self.x = x_pred + np.dot(K, y)
-        self.P = P_pred - np.dot(np.dot(K, self.H), P_pred)
-
-    def get_state(self):
-        return self.x 
     
 
 def main(args=None):

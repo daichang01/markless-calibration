@@ -34,6 +34,9 @@ class PCARegistration:
 
     
     def pca_adjust_calibration(self, source_cloud, target_cloud, source_pca, target_pca):
+        if target_pca is None:
+            print("target_pca is None")
+            return None
         # 将源点云和目标点云的点转换为NumPy数组
         source_points = np.asarray(source_cloud.points)
         target_points = np.asarray(target_cloud.points)
@@ -59,14 +62,14 @@ class PCARegistration:
             # 将源点云的点进行变换
             transformed_source_points = transform_points(source_pca_points, R, t)
             # 计算均方误差 (MSE)
-            mse = calculate_mse(transformed_source_points, target_pca_points)
+            rmse = calculate_rmse(transformed_source_points, target_pca_points)
             # 计算重叠率
             # overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
             overlap_ratio = calculate_overlap_ratio(transformed_source_points, target_pca_points)
-            print(f"combine: {i}, mse: {mse}, overlap: {overlap_ratio}")
+            print(f"combine: {i}, mse: {rmse}, overlap: {overlap_ratio}")
 
             # 添加到结果列表中
-            initial_results.append((mse, overlap_ratio, R, t, tuple(signs), i))
+            initial_results.append((rmse, overlap_ratio, R, t, tuple(signs), i))
 
         # 筛选出MSE最小和重叠率最大的结果
         min_mse_result = min(initial_results, key=lambda x: x[0])
@@ -90,11 +93,11 @@ class PCARegistration:
         source_cloud.transform(coarse_transformation)
         transformed_source_points = np.asarray(source_cloud.points)
 
-        mse = calculate_mse(transformed_source_points, target_points)
+        rmse = calculate_rmse(transformed_source_points, target_points)
             # 计算重叠率
             # overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
         overlap_ratio = calculate_overlap_ratio(transformed_source_points, target_points)
-        return coarse_transformation, source_cloud, mse, overlap_ratio
+        return coarse_transformation, source_cloud, rmse, overlap_ratio
     
     
     #原始pca

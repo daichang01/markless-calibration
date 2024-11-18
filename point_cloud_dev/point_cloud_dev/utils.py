@@ -104,7 +104,7 @@ def pointcloud2_to_open3d(pointcloud2_msg):
     return point_cloud
 
 
-def calculate_mse(source_points, target_points):
+def calculate_rmse(source_points, target_points):
         # 使用 float64 确保高精度计算
     source_points = np.asarray(source_points, dtype=np.float64)
     target_points = np.asarray(target_points, dtype=np.float64)
@@ -115,7 +115,9 @@ def calculate_mse(source_points, target_points):
     # 找到每个源点云点对应的最近的目标点云点
     nearest_target_points = target_points[indices]
     # 计算源点云和最近的目标点云点之间的均方误差 (MSE)
-    return np.mean((source_points - nearest_target_points)**2)
+    mse = np.mean((source_points - nearest_target_points)**2)
+    rmse = np.sqrt(mse)
+    return rmse * 1000
 
 def calculate_overlap_ratio(source_points, target_points, threshold=0.001):
     # 创建目标点云的KD树
@@ -262,3 +264,10 @@ def save_point_cloud_to_txt(filepath, point_cloud):
         for point in point_cloud.points:
             f.write(f"{point[0]} {point[1]} {point[2]}\n")
     print(f"Point cloud saved to {save_path}")
+
+
+def main():
+    getintrinsic()
+
+if __name__ == '__main__':
+    main()
