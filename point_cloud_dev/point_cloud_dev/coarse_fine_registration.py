@@ -43,13 +43,14 @@ class PointCloudRegistration(Node):
 
         self.rvizsource = load_point_cloud(self.valsource_path)
 
-        # 创建配准对象
+        # 创建配准器
         self.pca_registrator = PCARegistration()
         self.icp_registrator = ICPRegistration()
 
 
 ################################################  Registration Pipeline #############################################
     def lowfront_callback(self, msg):
+        self.get_logger().info(f"############################## Registration start ######################################3")
         self.target = pointcloud2_to_open3d(msg)
         if self.target is None or len(self.target.points) == 0:
             self.get_logger().info("Received empty target point cloud, skipping registration")
@@ -69,6 +70,8 @@ class PointCloudRegistration(Node):
         self.pointsval=  load_point_cloud(self.valpoints_path)
         self.source2 = load_point_cloud(self.source_path2)
 
+
+
         # 将目标点云保存为TXT文件
         # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/preprocess/precloud", self.target)
         # 可视化预处理后的点云
@@ -79,7 +82,7 @@ class PointCloudRegistration(Node):
         #法一：根据重叠率调整主轴方向
         coarse_result = self.pca_registrator.pca_adjust_calibration(self.source, self.target,self.source2,self.target_pca_copy)
         if coarse_result is None:
-            print("No valid transformation found, skipping further processing")
+            self.get_logger().info(f"No valid transformation found, skipping further processing")
             return
         coarse_transformation, transformed_source_cloud, rmse, overlap_ratio = coarse_result
         
@@ -88,14 +91,14 @@ class PointCloudRegistration(Node):
         end_time_pca = time.time()
 
         pca_time = end_time_pca - start_time_pca
-        print("PCA粗配准后的变换矩阵：")
-        print(f"{coarse_transformation}")
-        print("PCA粗配准后的评估结果：")
-        print(f"pca RMSE: {rmse}")
-        print(f"pca overlap_ratio: {overlap_ratio}")
+        # print("PCA粗配准后的变换矩阵：")
+        # print(f"{coarse_transformation}")
+        self.get_logger().info(f"PCA粗配准后的评估结果：")
+        self.get_logger().info(f"pca RMSE: {rmse}")
+        self.get_logger().info(f"pca overlap_ratio: {overlap_ratio}")
 
         # print(f"Best Axis Flip Combination: {best_frequent_combination}")
-        print(f"pca粗配准共计耗时: {pca_time} 秒")
+        self.get_logger().info(f"pca粗配准共计耗时: {pca_time} 秒")
 
         # 将目标点云保存为TXT文件
         # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/coarse/coarse", transformed_source_cloud)        
@@ -104,7 +107,6 @@ class PointCloudRegistration(Node):
 
 
     ####################  icp精配准  ##################
-        print("11111111111111111111111111111")
         start_time_icp_tra = time.time()
         #法一：传统icp
         fine_transformation, fine_transformed_source, overlap_ratio, rmse, num_valid_pairs = self.icp_registrator.icp_fine_registration \
@@ -113,50 +115,37 @@ class PointCloudRegistration(Node):
         end_time_icp_tra = time.time()
         icp_time_tra = end_time_icp_tra - start_time_icp_tra
         # print(f"icp 精配准后的变换矩阵：{fine_transformation}")
-        print(f"icp RMSE: {rmse}")
-        print(f"icp overlap_ratio: {overlap_ratio}")
-        print(f"icp精配准耗时: {icp_time_tra} 秒,有效点对数量: {num_valid_pairs}")
+        self.get_logger().info(f"传统icp粗配准后的评估结果：")
+        self.get_logger().info(f"icp RMSE: {rmse}")
+        self.get_logger().info(f"icp overlap_ratio: {overlap_ratio}")
+        self.get_logger().info(f"icp精配准耗时: {icp_time_tra} 秒,有效点对数量: {num_valid_pairs}")
 
 
-        print("22222222222222222222222222222")
         start_time_icp = time.time()
-        #法一：传统icp
-        # fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration \
-        #     (transformed_source_cloud, self.target)
-        #法二：曲线icp
-        # fine_transformation, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_curve \
-        #     (transformed_source_cloud, self.target)
-        #法三：软分配
+        #法二：软分配
         fine_transformation, fine_transformed_source, overlap_ratio, rmse, num_valid_pairs = self.icp_registrator.icp_fine_registration_with_soft_assignments \
             (transformed_source_cloud, self.target)
 
         end_time_icp = time.time()
         icp_time = end_time_icp - start_time_icp
         # print(f"icp soft精配准后的变换矩阵：{fine_transformation}")
-        print(f"icp soft RMSE: {rmse}")
-        print(f"icp soft overlap_ratio: {overlap_ratio}")
-        print(f"icp soft 精配准耗时: {icp_time} 秒,有效点对数量: {num_valid_pairs}")
+        self.get_logger().info(f"icp soft精配准后的评估结果：")
+        self.get_logger().info(f"icp soft RMSE: {rmse}")
+        self.get_logger().info(f"icp soft overlap_ratio: {overlap_ratio}")
+        self.get_logger().info(f"icp soft 精配准耗时: {icp_time} 秒,有效点对数量: {num_valid_pairs}")
 
-        print("333333333333333333333333333333")
         start_time_cauchy = time.time()
-        #法一：传统icp
-        # fine_transformation, fine_transformed_source, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration \
-        #     (transformed_source_cloud, self.target)
-        #法二：曲线icp
-        # fine_transformation, overlap_ratio, mse, num_valid_pairs = self.icp_registrator.icp_fine_registration_curve \
-        #     (transformed_source_cloud, self.target)
-        #法三：new
+        #法三：使用自适应权重和鲁棒损失函数的 ICP 精配准方法。
         fine_transformation, fine_transformed_source, overlap_ratio, rmse, num_valid_pairs = self.icp_registrator.icp_fine_registration_with_adaptive_weights \
             (transformed_source_cloud, self.target)
 
         end_time_cauchy = time.time()
         icp_time = end_time_cauchy - start_time_cauchy
         # print(f"icp soft精配准后的变换矩阵：{fine_transformation}")
-        print(f"icp cauchy RMSE: {rmse}")
-        print(f"icp cauchy overlap_ratio: {overlap_ratio}")
-        print(f"icp cauchy 精配准耗时: {icp_time} 秒,有效点对数量: {num_valid_pairs}")
-
-
+        self.get_logger().info(f"icp cauchy精配准后的评估结果：")
+        self.get_logger().info(f"icp cauchy RMSE: {rmse}")
+        self.get_logger().info(f"icp cauchy overlap_ratio: {overlap_ratio}")
+        self.get_logger().info(f"icp cauchy 精配准耗时: {icp_time} 秒,有效点对数量: {num_valid_pairs}")
 
 
 

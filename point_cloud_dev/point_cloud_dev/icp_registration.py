@@ -243,7 +243,7 @@ class ICPRegistration:
             geman_mcclure_losses = residuals ** 2 / (sigma ** 2 + residuals ** 2)
             error = np.sum(geman_mcclure_losses * weights_valid)
 
-            print(f"Iteration {iteration + 1}: Error = {error}")
+            # print(f"Iteration {iteration + 1}: Error = {error}")
             if np.abs(prev_error - error) < self.icp_threshold:
                 print(f"Converged after {iteration + 1} iterations.")
                 break  # 如果误差变化很小，终止迭代

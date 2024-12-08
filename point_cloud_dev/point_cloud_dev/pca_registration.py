@@ -66,7 +66,7 @@ class PCARegistration:
             # 计算重叠率
             # overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
             overlap_ratio = calculate_overlap_ratio(transformed_source_points, target_pca_points)
-            print(f"combine: {i}, mse: {rmse}, overlap: {overlap_ratio}")
+            # print(f"combine: {i}, mse: {rmse}, overlap: {overlap_ratio}")
 
             # 添加到结果列表中
             initial_results.append((rmse, overlap_ratio, R, t, tuple(signs), i))
@@ -79,14 +79,10 @@ class PCARegistration:
         if min_mse_result == max_overlap_result:
             best_result = min_mse_result
         else:
-            # 如果不是同一个，选择重叠率最大的那个
-            # best_result = max_overlap_result
-            # 如果不是同一个，选择均方误差最小的那个
-            # best_result = min_mse_result
             return None
 
         mse, overlap_ratio, R, t, signs, i = best_result
-        print(f"select: {i}, mse: {mse}, overlap: {overlap_ratio},signs: {signs}")
+        # print(f"select: {i}, mse: {mse}, overlap: {overlap_ratio},signs: {signs}")
         coarse_transformation = np.eye(4)
         coarse_transformation[:3, :3] = R
         coarse_transformation[:3, 3] = t
@@ -94,8 +90,7 @@ class PCARegistration:
         transformed_source_points = np.asarray(source_cloud.points)
 
         rmse = calculate_rmse(transformed_source_points, target_points)
-            # 计算重叠率
-            # overlap_ratio = self.calculate_overlap_ratio(transformed_source_points, target_points)
+            
         overlap_ratio = calculate_overlap_ratio(transformed_source_points, target_points)
         return coarse_transformation, source_cloud, rmse, overlap_ratio
     
