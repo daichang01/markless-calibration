@@ -15,19 +15,22 @@ class PointCloudRegistration(Node):
         # self.timer = self.create_timer(1, self.timer_callback)
         # 只有上边缘
         self.lowfront_sub = self.create_subscription(PointCloud2, '/lowfront_point_cloud', self.lowfront_callback, 10)
-        # 用于pca校正的三个牙齿边缘
+        # 用于pca校正的左侧三个牙齿边缘
         self.lowpca_sub = self.create_subscription(PointCloud2, '/lowfront_pca_adjust', self.lowpca_callback, 10)
-        # 利用上边缘和牙龈
+
+        # 用于pca校正的右侧三个牙齿边缘
+        self.lowpca_sub2 = self.create_subscription(PointCloud2, '/lowfront_pca_adjust2', self.lowpca_callback2, 10)
+        # 利用上边缘和牙龈（不好用）
         # self.combined_sub = self.create_subscription(PointCloud2, '/combined_point_cloud', self.lowfront_callback, 10)
         
         # 待配准边缘
 
         # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/Vertices6.txt"
-        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up6.txt"
-        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up6down2 - Cloud.txt"
-        # self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/updown5.txt"
         
-        self.source_path2 = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up3.txt"
+        self.source_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up6.txt"  #整体
+        self.source_path2 = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up3.txt" #左侧
+        self.source_path3 = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/up3onright.txt" #右侧
+        
         # 口扫点云验证
         self.valsource_path = "/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/0807model/teethrealon-down.txt"
 
@@ -69,8 +72,7 @@ class PointCloudRegistration(Node):
         self.rvizpcd = load_point_cloud(self.valsource_path)
         self.pointsval=  load_point_cloud(self.valpoints_path)
         self.source2 = load_point_cloud(self.source_path2)
-
-
+        self.sourceright = load_point_cloud(self.source_path3)
 
         # 将目标点云保存为TXT文件
         # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/preprocess/precloud", self.target)
@@ -78,16 +80,20 @@ class PointCloudRegistration(Node):
         # visualize_initial_point_clouds(self.source,  self.target, window_name='preprocessed')
     ####################  pca粗配准  ##########
         start_time_pca = time.time()
-        # 带调整主轴方向的pca
-        #法一：根据重叠率调整主轴方向
-        coarse_result = self.pca_registrator.pca_adjust_calibration(self.source, self.target,self.source2,self.target_pca_copy)
+        # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/coarse/time", self.source) 
+        # ######################带调整主轴方向的pca##################
+        # 术前：self.source 整体整体牙齿轮廓点云， self.source2 为左侧牙齿轮廓点云   self.sourceright为右侧牙齿轮廓点云
+        # 术中：self.target 整体牙齿轮廓点云， self.target_pca_copy为左侧牙齿轮廓点云 self.target_pca_copy2为右侧牙齿轮廓点云
+        # coarse_result = self.pca_registrator.pca_adjust_calibration(self.source, self.target,self.source2,self.target_pca_copy)
+        coarse_result = self.pca_registrator.pca_double_adjust(self.source, self.target,self.source2,self.target_pca_copy,self.sourceright,self.target_pca_copy2)
+        
         if coarse_result is None:
             self.get_logger().info(f"No valid transformation found, skipping further processing")
             return
-        coarse_transformation, transformed_source_cloud, rmse, overlap_ratio = coarse_result
+        # coarse_transformation, transformed_source_cloud, rmse, overlap_ratio = coarse_result
+        coarse_transformation, transformed_source_cloud, rmse = coarse_result
+
         
-        # 法二：原始pca
-        # coarse_transformation, transformed_source_cloud = self.pca_registrator.pca_calibration(self.source, self.target)
         end_time_pca = time.time()
 
         pca_time = end_time_pca - start_time_pca
@@ -95,15 +101,18 @@ class PointCloudRegistration(Node):
         # print(f"{coarse_transformation}")
         self.get_logger().info(f"PCA粗配准后的评估结果：")
         self.get_logger().info(f"pca RMSE: {rmse}")
-        self.get_logger().info(f"pca overlap_ratio: {overlap_ratio}")
+        # self.get_logger().info(f"pca overlap_ratio: {overlap_ratio}")
 
-        # print(f"Best Axis Flip Combination: {best_frequent_combination}")
         self.get_logger().info(f"pca粗配准共计耗时: {pca_time} 秒")
 
         # 将目标点云保存为TXT文件
-        # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/coarse/coarse", transformed_source_cloud)        
+        # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/coarse/", transformed_source_cloud) 
+        # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/coarse/", self.source) 
+        # save_point_cloud_to_txt("/home/daichang/Desktop/teeth_ws/src/markless-calibration/wait_to_reg/coarse/ori", self.target)        
+
         # 可视化粗配准后的点云
         # visualize_initial_point_clouds(self.source,  self.target, window_name='coarse_registration')
+
 
 
     ####################  icp精配准  ##################
@@ -176,18 +185,45 @@ class PointCloudRegistration(Node):
         print("publish trans scan point cloud !")
 
     def lowpca_callback(self, msg):
+        # 将接收到的点云消息转换为open3d格式
         self.target_pca = pointcloud2_to_open3d(msg)
+        # 如果转换后的点云为空，则跳过注册
         if self.target_pca is None or len(self.target_pca.points) == 0:
             self.get_logger().info("Received empty target_pca  point cloud, skipping registration")
             return
-        self.get_logger().info(f"Received new target point cloud with {len(self.target_pca.points)} points)")
+        # 打印接收到的点云信息
+        self.get_logger().info(f"Received new left target point cloud with {len(self.target_pca.points)} points)")
         # 去除离群值
         original_num_points = len(self.target_pca.points)
+        # 使用open3d的remove_statistical_outlier函数去除离群值
         self.target_pca, ind = self.target_pca.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.5)
         filtered_num_points = len(self.target_pca.points)
+        # 计算去除的离群值数量
         num_outliers = original_num_points - filtered_num_points
+        # 打印去除的离群值数量
         self.get_logger().info(f"pca_target Removed {num_outliers} outliers")
         self.target_pca_copy = self.target_pca
+    
+    # 右边3颗牙齿回调函数
+    def lowpca_callback2(self, msg):
+        # 将接收到的点云消息转换为open3d格式
+        self.target_pca2 = pointcloud2_to_open3d(msg)
+        # 如果转换后的点云为空，则跳过注册
+        if self.target_pca2 is None or len(self.target_pca2.points) == 0:
+            self.get_logger().info("Received empty target_pca  point cloud, skipping registration")
+            return
+        # 打印接收到的点云信息
+        self.get_logger().info(f"Received new right target point cloud with {len(self.target_pca.points)} points)")
+        # 去除离群值
+        original_num_points = len(self.target_pca2.points)
+        # 使用open3d的remove_statistical_outlier函数去除离群值
+        self.target_pca2, ind = self.target_pca2.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.5)
+        filtered_num_points = len(self.target_pca2.points)
+        # 计算去除的离群值数量
+        num_outliers = original_num_points - filtered_num_points
+        # 打印去除的离群值数量
+        self.get_logger().info(f"pca_target2 Removed {num_outliers} outliers")
+        self.target_pca_copy2 = self.target_pca2
         
     def timer_callback(self):
         self.publish_point_cloud(self.pub_ori, self.rvizsource)

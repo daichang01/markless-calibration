@@ -27,6 +27,7 @@ class ImageSubscriber(Node):
         self.depth_sub = message_filters.Subscriber(self, Image, '/camera/camera/aligned_depth_to_color/image_raw')
         self.lowon_publisher = self.create_publisher(PointCloud2, 'lowfront_point_cloud', 10)
         self.lowon3_publisher = self.create_publisher(PointCloud2, 'lowfront_pca_adjust', 10)
+        self.lowon3_publisher2 = self.create_publisher(PointCloud2, 'lowfront_pca_adjust2', 10)
         self.combined_publisher = self.create_publisher(PointCloud2, 'combined_point_cloud', 10)  
         self.roi_publisher = self.create_publisher(PointCloud2, 'roi_point_cloud', 10)
         self.processed_image_publisher = self.create_publisher(Image, 'processed_image', 10)
@@ -49,7 +50,7 @@ class ImageSubscriber(Node):
         self.points_combined = []  # 存储合并后的点云
 
 ##################  采集RGB和深度图并保存,用于yolo训练  ####################################################################
-        # self.timer = self.create_timer(2.0, self.save_images)
+        self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
         self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0905.pt") #yolov8在本地训练的实例分割模型
@@ -100,7 +101,7 @@ class ImageSubscriber(Node):
         # cv2.imshow("Depth Image", cv_depth_normalized)
         if cv2.waitKey(10) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
-############################################################### yolo实例分割################3#########################################
+############################################################### yolo实例分割#########################################################
         # 使用模型对最新的彩色图像进行预测，得到检测结果
         yolo_results = self.model.predict(self.latest_color_image)
         ############!!!!!!!!!!!!!!!! 如果不想进行预测，可以将结果设为 None,只用于图像收集
@@ -232,11 +233,6 @@ class ImageSubscriber(Node):
                             points_by_class[cls_idx].append([x, y, z, rgb])  # 添加到对应类别的点云
                                
                 self.create_pointcloud2_msg(points_edge, cls_idx)
-        # 检查是否同时包含类别 0 和 1(目前不采用牙龈边缘，需要的时候在打开)
-        # if 0 in detected_classes and 1 in detected_classes:
-        #     # 合并类别 0 和 1 的点云数据到 self.points_combined
-        #     self.points_combined.extend(points_by_class[0])
-        #     self.points_combined.extend(points_by_class[1])    
                 
 
 
@@ -345,7 +341,10 @@ class ImageSubscriber(Node):
             print("lowon Cloud published")
         elif(idx == 1):
             self.lowon3_publisher.publish(point_cloud_msg)
-            print("lowon3  pca adjust Cloud published")
+            print("lowon3 left  pca adjust Cloud published")
+        elif(idx == 2):
+            self.lowon3_publisher2.publish(point_cloud_msg)
+            print("lowon3 right  pca adjust Cloud published")
         elif(idx == 7):
             self.roi_publisher.publish(point_cloud_msg)
             print("roi Point Cloud published")

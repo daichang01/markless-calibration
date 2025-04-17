@@ -32,7 +32,64 @@ class PCARegistration:
         # 返回排序后的特征向量和中心点。特征向量的每一列都是一个主成分方向。
         return eigenvectors, centroid
 
-    
+    # source_cloud和target_cloud是整个上边缘，source_pac和target_pca是上边缘一半
+
+    def pca_double_adjust(self,source_cloud, target_cloud, source_pca, target_pca,source_pca2, target_pca2):
+        if target_pca is None:
+            print("target_pca is None")
+            return None
+        # 将源点云和目标点云的点转换为NumPy数组
+        source_points = np.asarray(source_cloud.points)
+        target_points = np.asarray(target_cloud.points)
+        source_pca_points = np.asarray(source_pca.points)
+        target_pca_points = np.asarray(target_pca.points)
+        source_pca2_points = np.asarray(source_pca2.points)
+        target_pca2_points = np.asarray(target_pca2.points)
+        
+        # 计算源点云和目标点云的PCA特征向量和质心
+        source_eigenvectors, source_centroid = self.compute_pca(source_points)
+        target_eigenvectors, target_centroid = self.compute_pca(target_points)
+
+        # 初始化结果列表
+        initial_results = []
+
+        # 遍历所有 8 种可能的主轴方向组合
+        for i in range(8):
+            signs = [(-1 if i & (1 << bit) else 1) for bit in range(3)]  # 生成一个包含3个元素的列表，分别为-1或1
+            adjusted_source_eigenvectors = source_eigenvectors * signs  # 调整源点云的特征向量方向
+            # 计算旋转矩阵和平移向量（重要）
+            R = np.dot(target_eigenvectors, adjusted_source_eigenvectors.T) 
+            t = target_centroid - np.dot(R, source_centroid)
+            transformed_left_source = transform_points(source_pca_points, R, t)
+            transformed_right_source = transform_points(source_pca2_points, R, t)
+
+            rmse_left = calculate_rmse(transformed_left_source, target_pca_points)
+            rmse_right = calculate_rmse(transformed_right_source, target_pca2_points)
+            # 先尝试不计算重叠率
+            initial_results.append((rmse_left, rmse_right, R, t, tuple(signs), i))
+        min_rmse_left = min(initial_results, key=lambda x: x[0])
+        min_rmse_right = min(initial_results, key=lambda x: x[1])
+        # 确保筛选出的结果是同一个
+        if min_rmse_left == min_rmse_right:
+            best_result = min_rmse_left
+        else:
+            return None
+        rmse_left, rmse_right, R, t, signs, i = best_result
+        coarse_transformation = np.eye(4)
+        coarse_transformation[:3, :3] = R
+        coarse_transformation[:3, 3] = t
+        source_cloud.transform(coarse_transformation)
+        transformed_whole_source = np.asarray(source_cloud.points)
+
+        rmse = calculate_rmse(transformed_whole_source, target_points)
+            
+        return coarse_transformation, source_cloud, rmse
+
+            
+
+
+
+
     def pca_adjust_calibration(self, source_cloud, target_cloud, source_pca, target_pca):
         if target_pca is None:
             print("target_pca is None")
@@ -47,6 +104,7 @@ class PCARegistration:
         source_eigenvectors, source_centroid = self.compute_pca(source_points)
         target_eigenvectors, target_centroid = self.compute_pca(target_points)
 
+
         # 初始化结果列表
         initial_results = []
 
@@ -55,7 +113,7 @@ class PCARegistration:
             signs = [(-1 if i & (1 << bit) else 1) for bit in range(3)]  # 生成一个包含3个元素的列表，分别为-1或1
             adjusted_source_eigenvectors = source_eigenvectors * signs  # 调整源点云的特征向量方向
 
-            # 计算旋转矩阵和平移向量
+            # 计算旋转矩阵和平移向量（重要）
             R = np.dot(target_eigenvectors, adjusted_source_eigenvectors.T)
             t = target_centroid - np.dot(R, source_centroid)
             
@@ -122,4 +180,5 @@ class PCARegistration:
          # 可视化粗配准
         # visualize_initial_point_clouds(source_cloud, target_cloud, "ori_coarse_registration")
         return coarse_transformation, source_cloud
+    
     

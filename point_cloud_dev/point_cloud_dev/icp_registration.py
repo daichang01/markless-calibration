@@ -341,6 +341,116 @@ class ICPRegistration:
 
         return transformation, transformed_source_pcd, overlap_ratio, rmse, len(valid_pairs)  # 返回变换矩阵，最终误差和有效点对的数量
     
+    def icp_fine_registration_with_optimizations(self, source, target, k=10):
+        """
+        改进的ICP精配准流程（集成双向检查+自适应sigma+Tukey鲁棒优化）
+        输入:
+            source: 源点云（Open3D对象）
+            target: 目标点云（Open3D对象）
+            k: 密度计算邻域点数
+        返回:
+            变换矩阵、误差指标等结果
+        """
+        # ==================== 数据初始化 ====================
+        source_points = np.asarray(source.points)       # 转换为NumPy数组
+        target_points = np.asarray(target.points)
+        print(f"初始化点云: [源 {len(source_points)}点] -> [目标 {len(target_points)}点]")
+
+        # ========== 双向KDTree初始化（优化点1：双向检查准备）==========
+        source_tree = cKDTree(source_points)            # 源点云KDTree
+        target_tree = cKDTree(target_points)            # 目标点云KDTree（新增）
+
+        # ========== 密度权重计算（保留原始逻辑）==========
+        print("计算点云密度权重...")
+        source_densities = self.compute_point_density(source_points, k=k)
+        target_densities = self.compute_point_density(target_points, k=k)
+
+        source_weights = 1.0 / (source_densities + 1e-8) # 反比密度权重
+        target_weights = 1.0 / (target_densities + 1e-8)
+        source_weights /= np.max(source_weights)        # 归一化至[0,1]
+        target_weights /= np.max(target_weights)
+
+        # ========== 参数初始化 ==========
+        sigma_init = self.threshold                     # 初始sigma（如术前-术中点云初始最大误差）
+        sigma_decay = 0.95                              # 每轮sigma衰减系数（超参数可调）
+        prev_error = float('inf')                       # 收敛判断阈值
+
+        # ==================== 主ICP循环 ====================
+        for iter in range(self.max_icp_iter):           # 建议调整为100次
+            # --- 自适应sigma调整（优化点2）---
+            current_sigma = sigma_init * (sigma_decay ** iter)
+            print(f"Iter {iter+1}: 当前Sigma={current_sigma:.2f}mm")
+
+            # --- 改进的对应点搜索（优化点1：双向一致性验证）---
+            valid_pairs = []
+            # Step 1: 正向搜索（目标到源）
+            fwd_dist, fwd_indices = source_tree.query(target_points, k=1)
+            # Step 2: 反向搜索（源到目标）
+            _, bwd_indices = target_tree.query(source_points, k=1)
+            
+            # Step 3: 验证双向一致性（互为最近邻）
+            for t_idx in range(len(target_points)):
+                s_idx = fwd_indices[t_idx]              # 目标点t_idx的源点候选s_idx
+                if bwd_indices[s_idx] == t_idx:         # 验证反向一致性（关键过滤步骤）
+                    s_pt = source_points[s_idx]
+                    t_pt = target_points[t_idx]
+                    
+                    # --- Tukey权重计算（优化点3：替代原Geman-McClure）---
+                    residual = np.linalg.norm(s_pt - t_pt)
+                    # Tukey双权函数定义（c=4.685为常见鲁棒统计参数）
+                    tukey_c = 4.685 * current_sigma     # 动态调整c参数
+                    r = residual / current_sigma
+                    weight = (1 - (r/tukey_c)**2)**2 if r < tukey_c else 0.0
+                    
+                    # --- 密度权重融合 ---
+                    dens_weight = source_weights[s_idx] * target_weights[t_idx]
+                    final_weight = weight * dens_weight
+                    
+                    valid_pairs.append( (s_idx, t_idx, final_weight) ) # 存储三元组
+            
+            # --- 有效性检查 ---
+            if len(valid_pairs) == 0:
+                print("警告：无可匹配点对！提前终止迭代")
+                break
+            
+            # ========== 加权变换估计 ==========
+            # --- 权重归一化 ---
+            weights = np.array([p[2] for p in valid_pairs])
+            weights_sum = np.sum(weights)
+            if weights_sum < 1e-8:                      # 防止除零
+                weights = np.ones_like(weights) / len(weights)
+            else:
+                weights /= weights_sum                   # 归一化
+            
+            # --- 提取匹配点对 ---
+            s_indices = [p[0] for p in valid_pairs]
+            t_indices = [p[1] for p in valid_pairs]
+            source_matched = source_points[s_indices]    # 有效源点
+            target_matched = target_points[t_indices]    # 有效目标点
+            
+            # --- SVD求解加权变换矩阵 ---
+            R, t = self.weighted_svd_transform(source_matched, target_matched, weights)
+            source_points = (R @ source_points.T).T + t  # 更新源点位置
+            
+            # ========== 收敛性判断 ==========
+            residuals = np.linalg.norm(source_matched - target_matched, axis=1)
+            current_error = np.sum( weights * (residuals**2) )  # 加权均方误差
+            print(f"当前误差: {current_error:.4f} (Δ={prev_error - current_error:.4f})")
+            
+            if prev_error - current_error < self.icp_tolerance:
+                print(f"第{iter+1}次迭代收敛")
+                break
+            prev_error = current_error
+
+        # ========== 结果打包 ==========
+        transformation = np.eye(4)
+        transformation[:3, :3] = R
+        transformation[:3, 3] = t
+        
+        # [...] 后续评估指标计算（RMSE/Overlap等，与原逻辑一致）
+        
+        return transformation, transformed_pcd, overlap, rmse, matches
+        
     
     def compute_tangents(self, points):
         tangents = []

@@ -49,7 +49,7 @@ def visualize_initial_point_clouds(pc1, pc2, window_name='untitle', width=1000, 
     pc2.paint_uniform_color([0, 1, 0])  # green
 
     # Create coordinate frames
-    axis_pc = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.01)
+    axis_pc = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.001)
     axis_pc1 = create_local_axis(pc1)
     axis_pc2 = create_local_axis(pc2)
 
