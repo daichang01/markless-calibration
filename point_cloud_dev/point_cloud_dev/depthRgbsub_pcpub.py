@@ -28,7 +28,7 @@ class ImageSubscriber(Node):
         self.lowon_publisher = self.create_publisher(PointCloud2, 'lowfront_point_cloud', 10)
         self.lowon3_publisher = self.create_publisher(PointCloud2, 'lowfront_pca_adjust', 10)
         self.lowon3_publisher2 = self.create_publisher(PointCloud2, 'lowfront_pca_adjust2', 10)
-        self.combined_publisher = self.create_publisher(PointCloud2, 'combined_point_cloud', 10)  
+        # self.combined_publisher = self.create_publisher(PointCloud2, 'combined_point_cloud', 10)  
         self.roi_publisher = self.create_publisher(PointCloud2, 'roi_point_cloud', 10)
         self.processed_image_publisher = self.create_publisher(Image, 'processed_image', 10)
         # 该同步器会在一个队列中存储最多 10 个消息，并且它会容忍消息时间戳之间最多相差 0.05 秒的偏差。
@@ -47,13 +47,13 @@ class ImageSubscriber(Node):
         self.image_index = 0
         self.image_folder = "src/markless-calibration/image"  # 路径需要根据你的文件系统进行修改
 
-        self.points_combined = []  # 存储合并后的点云
+
 
 ##################  采集RGB和深度图并保存,用于yolo训练  ####################################################################
         self.timer = self.create_timer(2.0, self.save_images)
 
 ##################   yolo集成，用于加载训练好的模型 ########################################################################################
-        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best0905.pt") #yolov8在本地训练的实例分割模型
+        self.model = YOLO("/home/daichang/Desktop/teeth_ws/src/markless-calibration/seg_pt/best250311.pt") #yolov8在本地训练的实例分割模型
         
     def save_images(self):
         if self.latest_color_image is not None and self.latest_depth_image is not None:
@@ -110,22 +110,29 @@ class ImageSubscriber(Node):
         if yolo_results:
             for res in yolo_results:
                 # 对每一个结果进行进一步处理
-                self.process_oneres(res)
-            self.publish_combined_pointcloud()  # 发布合并后的点云
-            self.points_combined = []  # 清空合并点云数据
+                # self.process_oneres(res)
+                self.process_oneresult(res)
+
+
                     
         else:
             print("No objects detected")
 
-    def process_oneres(self, r):
-        detected_classes = set()
-        points_by_class = {0: [], 1:[]}
+
+    def process_oneresult(self, r):
+        points_by_class = { 0:[], 1:[], 2:[]}
         # https://docs.ultralytics.com/zh/guides/isolating-segmentation-objects/#recipe-walk-through
         # https://docs.ultralytics.com/modes/predict/#working-with-results
         img = np.copy(r.orig_img)
-        img_name = Path(r.path).stem
 
-        sorted_results = sorted(r, key=lambda c: 0 if int(c.boxes.cls[0]) == 1 else 1)
+
+        # sorted_results = sorted(r, key=lambda c: 0 if int(c.boxes.cls[0]) == 1 else 1)
+            # 只处理类别1和2
+        sorted_results = sorted(
+            [c for c in r if int(c.boxes.cls[0]) in [1, 2]],
+            key=lambda c: int(c.boxes.cls[0])
+        )
+
 
         # 创建一个与原图大小相同的黑色掩码，用于存储所有检测到的对象
         combined_mask = np.zeros(img.shape[:2], np.uint8)
@@ -134,23 +141,26 @@ class ImageSubscriber(Node):
         for ci, c in enumerate(sorted_results):
             img_tmp = img.copy()
             # 获取检测到的对象的标签名称
-            # label = c.names[c.boxes.cls.tolist().pop()]
             cls_idx = int(c.boxes.cls[0])  # 获取类别索引
-            # cls = c.boxes.cls
-            # print(f"Detected class: {cls}")
-            detected_classes.add(cls_idx)  # 添加类别到集合
+            print(f"Detected Class Index: {cls_idx}")
 
             if cls_idx in points_by_class:
-            # if cls_idx == 0:
-
                 label = c.names[cls_idx]  # 使用索引获取标签名称
+                print(f"Processing class {cls_idx}: {label}")
 
                 # 创建一个与原图大小相同的黑色掩码
                 b_mask = np.zeros(img_tmp.shape[:2], np.uint8)
+
+                if not hasattr(c, 'masks') or c.masks is None:
+                    print(f"⚠️ Class {cls_idx} has no masks! Skipping...")
+                    continue  # Skip if no masks
                 # print(f"masks:{c.masks}")
                 # 从检测对象中提取轮廓并转换为整数坐标
                 # contour = c.masks.xy.pop()
                 for contour in c.masks.xy:
+                    if contour is None or len(contour) < 3:
+                        print(f"❌ Invalid contour for class {cls_idx}")
+                        continue
                     # 这些值被转入 np.int32 以兼容 drawContours() 函数。
                     contour = contour.astype(np.int32)
                     #符合 OpenCV cv2.drawContours 函数的要求
@@ -199,6 +209,141 @@ class ImageSubscriber(Node):
                     cv2.waitKey(5)
                     if cls_idx == 0: 
                         self.publish_processed_image(overlaid_image)
+
+                    
+                    elif cls_idx == 1:
+                        # 不展示
+                        pass
+                    
+
+                ###############################  深度图边缘转点云 ##################################################
+                start_x, end_x = x1, x2
+                start_y, end_y = y1, y2      
+
+                points_edge = []
+                points_roi = []
+
+
+                # for v in range(start_y, end_y):
+                #     for u in range(start_x, end_x):
+                #         depth = cv_depth_image[v, u]
+                for contour in large_contours:
+                    for point in contour:
+                        u = point[0][0] + start_x
+                        v = point[0][1] + start_y
+                        depth = self.latest_depth_image[v, u]
+                        if depth > 0:  # 移除深度值为0的点
+                            z = depth * 0.001  # scale depth to meters
+                            x = (u - self.cx) * z / self.fx
+                            y = (v - self.cy) * z / self.fy
+                            b, g, r = self.latest_color_image[v, u].astype(np.uint8)
+                            # print("BGR values:", b, g, r)  # 直接打印看是否有异常
+                            rgb = struct.pack('BBBB', b, g, r, 255)  # 封装BGR到一个uint32中
+                            rgb = struct.unpack('I', rgb)[0]
+                            points_edge.append([x, y, z, rgb])
+                            points_by_class[cls_idx].append([x, y, z, rgb])  # 添加到对应类别的点云
+                self.create_pointcloud2_msg(points_edge, cls_idx)
+
+        if points_by_class[1] or points_by_class[2]:
+            points_by_class[0] = points_by_class[1] + points_by_class[2]      
+            print(f"len of lowon: {len(points_by_class[0])}")
+            self.create_pointcloud2_msg(points_by_class[0], 0)
+                
+
+
+
+               
+                
+
+# 单张图像结果处理
+    def process_oneres(self, r):
+        points_by_class = {0: [], 1:[], 2:[]}
+        # https://docs.ultralytics.com/zh/guides/isolating-segmentation-objects/#recipe-walk-through
+        # https://docs.ultralytics.com/modes/predict/#working-with-results
+        img = np.copy(r.orig_img)
+        img_name = Path(r.path).stem
+
+        sorted_results = sorted(r, key=lambda c: 0 if int(c.boxes.cls[0]) == 1 else 1)
+
+        # 创建一个与原图大小相同的黑色掩码，用于存储所有检测到的对象
+        combined_mask = np.zeros(img.shape[:2], np.uint8)
+        
+        # 遍历每个结果中的对象，这些对象可能代表不同的检测到的实体,这里c就是r
+        for ci, c in enumerate(sorted_results):
+            img_tmp = img.copy()
+            # 获取检测到的对象的标签名称
+            cls_idx = int(c.boxes.cls[0])  # 获取类别索引
+            print(f"Detected Class Index: {cls_idx}")
+
+            if cls_idx in points_by_class:
+                label = c.names[cls_idx]  # 使用索引获取标签名称
+                print(f"Processing class {cls_idx}: {label}")
+
+                # 创建一个与原图大小相同的黑色掩码
+                b_mask = np.zeros(img_tmp.shape[:2], np.uint8)
+                print("b_mask 的大小（形状）：", b_mask.shape)
+
+
+                ### ⭐ 1. Check if masks exist (critical for avoiding crashes)
+                if not hasattr(c, 'masks') or c.masks is None:
+                    print(f"⚠️ Class {cls_idx} has no masks! Skipping...")
+                    continue  # Skip if no masks
+                # print(f"masks:{c.masks}")
+                # 从检测对象中提取轮廓并转换为整数坐标
+                # contour = c.masks.xy.pop()
+                for contour in c.masks.xy:
+                    if contour is None or len(contour) < 3:
+                        print(f"❌ Invalid contour for class {cls_idx}")
+                        continue
+                    # 这些值被转入 np.int32 以兼容 drawContours() 函数。
+                    contour = contour.astype(np.int32)
+                    #符合 OpenCV cv2.drawContours 函数的要求
+                    contour = contour.reshape(-1, 1, 2) 
+                    # 在蒙版上绘制轮廓
+                    _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+                            # 将当前类别的掩码与整体掩码结合，保留所有类别的区域
+                combined_mask = cv2.bitwise_or(combined_mask, b_mask)
+                # 将单通道的黑白掩码转换为三通道格式
+                mask3ch = cv2.cvtColor(combined_mask, cv2.COLOR_GRAY2BGR)
+                # 结果是原图中只有与掩码白色区域相对应的部分被保留，其余部分因为与黑色（0）的与操作而变为黑色。
+                # # 使用二进制掩码隔离对象
+                isolated = cv2.bitwise_and(mask3ch, img_tmp)
+
+                # cv2.namedWindow(f"isolated", cv2.WINDOW_NORMAL)
+                # cv2.imshow(f"isolated", isolated)
+                # cv2.waitKey(5)
+                #  边界框坐标
+                x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+                print(f"{cls_idx}_{label}: {x1, y1, x2, y2}")
+                # 将图像裁剪到对象区域
+                iso_crop = isolated[y1:y2, x1:x2]
+
+                # cv2.namedWindow(f"{cls_idx}_{label}", cv2.WINDOW_NORMAL)
+                # cv2.imshow(f"{cls_idx}_{label}", iso_crop)
+                # cv2.waitKey(5)
+
+                ############################################## 牙齿轮廓提取 #####################################################
+                contours, large_contours, interpolated_contours = self.edge_extration(x1, y1, x2, y2, combined_mask, iso_crop)
+                
+                # 选择面积最大的轮廓绘制
+                if contours:
+                    # 根据面积排序轮廓
+                    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+                    # contours = contours[:len(large_contours)] # 选择前 n个 根据实际情况调整
+                    contours = contours[:4] # 选择前 n个 根据实际情况调整
+                    #绘制前n个最大轮廓
+                    mask = np.zeros_like(iso_crop)
+                    cv2.drawContours(mask, contours, -1, (0, 255, 0), 1)
+
+                    overlaid_image = cv2.addWeighted(iso_crop, 0.7, mask, 0.3, 0)
+
+                    cv2.namedWindow(f"{cls_idx}_{label} Overlaid", cv2.WINDOW_NORMAL)
+                    # cv2.imshow(f"{cls_idx}_{label}mask", mask)
+                    cv2.imshow(f"{cls_idx}_{label} Overlaid", overlaid_image)
+                    cv2.waitKey(5)
+                    if cls_idx == 0: 
+                        self.publish_processed_image(overlaid_image)
+
                     
                     elif cls_idx == 1:
                         # 不展示
@@ -319,15 +464,6 @@ class ImageSubscriber(Node):
         self.processed_image_publisher.publish(image_msg)
 
     
-    def publish_combined_pointcloud(self):
-        header = Header(frame_id='camera_infra1_optical_frame', stamp=self.get_clock().now().to_msg())
-        fields = [PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-                  PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-                  PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-                  PointField(name='rgb', offset=12, datatype=PointField.UINT32, count=1)]
-        point_cloud_msg = pc2.create_cloud(header, fields, self.points_combined)
-        self.combined_publisher.publish(point_cloud_msg)
-        print("Combined Point Cloud published")
 
     def create_pointcloud2_msg(self, points, idx):
         header = Header(frame_id='camera_infra1_optical_frame', stamp=self.get_clock().now().to_msg())

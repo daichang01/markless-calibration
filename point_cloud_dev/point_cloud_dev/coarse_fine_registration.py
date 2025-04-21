@@ -50,6 +50,9 @@ class PointCloudRegistration(Node):
         self.pca_registrator = PCARegistration()
         self.icp_registrator = ICPRegistration()
 
+        self.target_pca_copy = None  
+        self.target_pca_copy2 = None
+
 
 ################################################  Registration Pipeline #############################################
     def lowfront_callback(self, msg):
@@ -213,7 +216,7 @@ class PointCloudRegistration(Node):
             self.get_logger().info("Received empty target_pca  point cloud, skipping registration")
             return
         # 打印接收到的点云信息
-        self.get_logger().info(f"Received new right target point cloud with {len(self.target_pca.points)} points)")
+        self.get_logger().info(f"Received new right target point cloud with {len(self.target_pca2.points)} points)")
         # 去除离群值
         original_num_points = len(self.target_pca2.points)
         # 使用open3d的remove_statistical_outlier函数去除离群值

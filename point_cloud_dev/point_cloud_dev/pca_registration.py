@@ -35,7 +35,7 @@ class PCARegistration:
     # source_cloud和target_cloud是整个上边缘，source_pac和target_pca是上边缘一半
 
     def pca_double_adjust(self,source_cloud, target_cloud, source_pca, target_pca,source_pca2, target_pca2):
-        if target_pca is None:
+        if target_pca is None or target_pca2 is None:
             print("target_pca is None")
             return None
         # 将源点云和目标点云的点转换为NumPy数组
@@ -70,7 +70,8 @@ class PCARegistration:
         min_rmse_left = min(initial_results, key=lambda x: x[0])
         min_rmse_right = min(initial_results, key=lambda x: x[1])
         # 确保筛选出的结果是同一个
-        if min_rmse_left == min_rmse_right:
+        sigma = 1
+        if min_rmse_left == min_rmse_right and min_rmse_left[0] < sigma:
             best_result = min_rmse_left
         else:
             return None
